@@ -1,0 +1,53 @@
+Manifest-Version: 1.0
+Atlassian-Build-Date: 2025-12-09T14:31:44-0500
+Atlassian-Plugin-Key: com.koushik.docusign.jira-docusign-plugin
+Bnd-LastModified: 1765308708131
+Build-Jdk-Spec: 17
+Bundle-Description: This is the com.koushik.docusign:jira-docusign-plugi
+ n plugin for Atlassian JIRA.
+Bundle-DocURL: http://www.example.com/
+Bundle-ManifestVersion: 2
+Bundle-Name: jira-docusign-plugin
+Bundle-SymbolicName: com.koushik.docusign.jira-docusign-plugin
+Bundle-Vendor: Example Company
+Bundle-Version: 1.0.0.SNAPSHOT
+Created-By: Apache Maven Bundle Plugin 5.1.9
+Embed-Dependency: groupId=com.docusign;artifactId=docusign-esign-java;in
+ line=true;scope=compile,groupId=com.auth0;artifactId=java-jwt;inline=tr
+ ue;scope=compile,groupId=jakarta.ws.rs;artifactId=jakarta.ws.rs-api;inl
+ ine=true;scope=compile,groupId=org.glassfish.jersey.core;artifactId=jer
+ sey-client;inline=true;scope=compile,groupId=org.glassfish.jersey.injec
+ t;artifactId=jersey-hk2;inline=true;scope=compile,groupId=jakarta.activ
+ ation;artifactId=jakarta.activation-api;inline=true;scope=compile,group
+ Id=jakarta.validation;artifactId=jakarta.validation-api;inline=true;sco
+ pe=compile
+Embed-Transitive: false
+Export-Package: com.koushik.docusign.api;version="1.0.0"
+Import-Package: jakarta.xml.bind.annotation;resolution:=optional,jakarta
+ .xml.bind.annotation.adapters;resolution:=optional,com.atlassian.jira.c
+ omponent,com.atlassian.jira.issue,com.atlassian.jira.issue.attachment,c
+ om.atlassian.jira.util.io,com.atlassian.plugin.spring.scanner.annotatio
+ n.export,com.atlassian.plugin.spring.scanner.annotation.imports,com.atl
+ assian.plugin.web,com.atlassian.sal.api,com.koushik.docusign.api,com.su
+ n.jdi,com.sun.jdi.connect,com.sun.jdi.event,com.sun.jdi.request,com.sun
+ .tools.attach,java.applet,java.awt.image,java.beans,java.io,java.lang,j
+ ava.lang.annotation,java.lang.instrument,java.lang.invoke,java.lang.man
+ agement,java.lang.ref,java.lang.reflect,java.math,java.net,java.nio,jav
+ a.nio.channels,java.nio.charset,java.nio.file,java.nio.file.attribute,j
+ ava.nio.file.spi,java.security,java.security.cert,java.security.interfa
+ ces,java.security.spec,java.sql,java.text,java.time,java.time.format,ja
+ va.time.temporal,java.util,java.util.concurrent,java.util.concurrent.at
+ omic,java.util.concurrent.locks,java.util.function,java.util.jar,java.u
+ til.logging,java.util.regex,java.util.stream,java.util.zip,javax.crypto
+ ,javax.crypto.interfaces,javax.crypto.spec,javax.imageio,javax.imageio.
+ spi,javax.imageio.stream,javax.inject,javax.naming,javax.naming.directo
+ ry,javax.net.ssl,javax.security.auth,javax.security.auth.callback,javax
+ .security.auth.x500,javax.ws.rs,javax.ws.rs.core,javax.xml.datatype,jav
+ ax.xml.namespace,javax.xml.parsers,javax.xml.stream,javax.xml.transform
+ ,javax.xml.transform.dom,javax.xml.transform.sax,javax.xml.transform.st
+ ream,org.apache.commons.io,org.glassfish.jersey.jackson,org.glassfish.j
+ ersey.media.multipart,org.hibernate.validator,org.osgi.framework,org.w3
+ c.dom,org.xml.sax,sun.misc
+Spring-Context: *
+Tool: Bnd-6.3.1.202206071316
+
