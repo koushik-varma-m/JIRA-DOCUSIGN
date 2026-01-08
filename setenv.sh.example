@@ -1,0 +1,42 @@
+#!/bin/bash
+#
+# DocuSign OAuth configuration for Jira Dev (atlas-run)
+# Copy this file to ./setenv.sh and fill in values (setenv.sh is gitignored).
+#
+# Using OAuth Authorization Code flow with PKCE - no RSA keys needed.
+#
+
+if [ -f ./setenv.local.sh ]; then
+  # Local-only secrets (gitignored)
+  source ./setenv.local.sh
+fi
+
+# Required (for PKCE OAuth)
+export DOCUSIGN_CLIENT_ID="your-integration-key"
+
+# Optional: preferred DocuSign account id (leave empty to use user's default account)
+export DOCUSIGN_ACCOUNT_ID=""
+
+# Demo environment (developer sandbox)
+export DOCUSIGN_OAUTH_BASE="https://account-d.docusign.com"
+export DOCUSIGN_REST_BASE="https://demo.docusign.net/restapi"
+
+# Origin header for public client PKCE token exchange (match your Jira base URL)
+export DOCUSIGN_ORIGIN="http://localhost:2990"
+
+# Webhook (DocuSign Connect / eventNotification) - recommended for near-instant status updates.
+# This URL must be publicly reachable (use ngrok/cloudflared/etc for local dev).
+export DOCUSIGN_WEBHOOK_URL="https://<your-public-domain>/jira/rest/docusign/1.0/send/webhook"
+
+# Shared secret appended to webhook URL when sending envelopes (dev convenience).
+# For production, prefer DOCUSIGN_CONNECT_HMAC_KEY signature verification.
+export DOCUSIGN_WEBHOOK_SECRET="replace_me"
+
+# Optional but recommended: validate webhook signatures (configure same HMAC key in DocuSign Connect settings).
+# export DOCUSIGN_CONNECT_HMAC_KEY="YOUR_HMAC_KEY"
+
+# Jira user used to write issue properties when webhook calls are anonymous.
+export DOCUSIGN_WEBHOOK_ACTOR="admin"
+
+# To apply: cp setenv.sh.example setenv.sh && source ./setenv.sh && atlas-run
+

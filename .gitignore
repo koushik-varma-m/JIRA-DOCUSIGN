@@ -1,5 +1,8 @@
 # Maven
 target/
+.idea/
+setenv.local.sh
+setenv.sh
 pom.xml.tag
 pom.xml.releaseBackup
 pom.xml.versionsBackup
@@ -29,6 +32,9 @@ Thumbs.db
 # Logs
 *.log
 logs/
+ngrok.pid
+ngrok.log
+screenlog.*
 
 # Jira runtime files
 target/jira/
@@ -60,4 +66,3 @@ config.properties
 !.gitignore
 !README.md
 !*.md
-

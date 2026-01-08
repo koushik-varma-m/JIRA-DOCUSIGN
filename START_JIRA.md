@@ -2,7 +2,8 @@
 
 ## ⚠️ Problem Identified
 
-Jira starts successfully but immediately shuts down when run in background. This is because `atlas-run` needs to stay in the foreground to keep Jira running.
+Jira may fail to start if Tomcat ends up with a partially-exploded `jira` webapp directory (missing JARs).
+Also, `atlas-run` is easiest to run in the foreground during development.
 
 ## ✅ Solution: Run Jira in Foreground
 
@@ -13,6 +14,17 @@ atlas-run
 ```
 
 **Keep this terminal open** - Jira will keep running. Press `Ctrl+C` to stop.
+
+If startup fails with missing JARs (example: `batik-xml-1.17.jar`), run:
+```bash
+rm -rf target/container/tomcat9x/cargo-jira-home/webapps/jira
+atlas-run
+```
+
+Shortcut script:
+```bash
+./scripts/jira-start-clean.sh
+```
 
 ---
 
@@ -30,7 +42,7 @@ tail -f jira.log
 
 To stop:
 ```bash
-pkill -f "atlas-run"
+./scripts/jira-stop.sh
 ```
 
 ---
@@ -46,6 +58,11 @@ atlas-run
 
 # Detach: Press Ctrl+A then D
 # Reattach: screen -r jira
+```
+
+Shortcut script (recommended):
+```bash
+./scripts/jira-start-screen.sh
 ```
 
 ---
@@ -98,9 +115,4 @@ atlas-run
 ## ✅ Current Status
 
 - ✅ Code compiles successfully
-- ✅ All errors fixed
-- ✅ Plugin ready
-- ⚠️ Need to keep Jira running in foreground
-
-**Your code is perfect! Just need to start Jira properly and keep it running.**
-
+- ✅ Jira starts with `atlas-run` (after cleaning if needed)

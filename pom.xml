@@ -68,6 +68,33 @@
             <version>1.1.1</version>
             <scope>provided</scope>
         </dependency>
+        <!-- Atlassian REST annotations (e.g., @AnonymousAllowed) -->
+        <dependency>
+            <groupId>com.atlassian.plugins.rest</groupId>
+            <artifactId>atlassian-rest-module</artifactId>
+            <version>7.0.12</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.atlassian.sal</groupId>
+            <artifactId>sal-api</artifactId>
+            <version>3.0.0</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Active Objects (AO) for durable persistence (provided by Jira) -->
+        <dependency>
+            <groupId>com.atlassian.activeobjects</groupId>
+            <artifactId>activeobjects-plugin</artifactId>
+            <version>5.0.3</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.atlassian.activeobjects</groupId>
+            <artifactId>activeobjects-spi</artifactId>
+            <version>5.0.3</version>
+            <scope>provided</scope>
+        </dependency>
 
         <!-- Apache HttpClient for direct REST API calls to DocuSign (compatible with Jira) -->
         <dependency>
@@ -84,7 +111,28 @@
                     <groupId>org.apache.avalon</groupId>
                     <artifactId>avalon-framework</artifactId>
                 </exclusion>
+                <!-- Explicitly exclude jakarta.* and jersey.* to prevent transitive dependencies -->
+                <exclusion>
+                    <groupId>jakarta.*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.glassfish.jersey.*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>com.docusign</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
             </exclusions>
+        </dependency>
+
+        <!-- Workaround: resolve legacy commons-httpclient expected by JIRA deps -->
+        <dependency>
+            <groupId>commons-httpclient</groupId>
+            <artifactId>commons-httpclient</artifactId>
+            <version>3.1</version>
+            <scope>provided</scope>
         </dependency>
         
         <!-- JSON library for parsing DocuSign API responses -->
@@ -92,16 +140,20 @@
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
             <version>2.10.1</version>
+            <exclusions>
+                <!-- Ensure no jakarta.* or jersey.* dependencies are pulled in -->
+                <exclusion>
+                    <groupId>jakarta.*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.glassfish.jersey.*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
-        
-        <!-- JWT library for DocuSign JWT authentication (compatible with Java 8/Jira) -->
-        <dependency>
-            <groupId>com.auth0</groupId>
-            <artifactId>java-jwt</artifactId>
-            <version>4.4.0</version>
-        </dependency>
-        
-        <!-- BouncyCastle for RSA key handling in JWT -->
+
+        <!-- BouncyCastle provides ASN.1/CMS classes needed by the DocuSign JWT helper -->
         <dependency>
             <groupId>org.bouncycastle</groupId>
             <artifactId>bcprov-jdk15on</artifactId>
@@ -112,6 +164,17 @@
             <artifactId>bcpkix-jdk15on</artifactId>
             <version>1.70</version>
         </dependency>
+        
+        <!-- Servlet API for OAuth servlets (provided by Jira container) -->
+        <dependency>
+            <groupId>javax.servlet</groupId>
+            <artifactId>servlet-api</artifactId>
+            <version>2.5</version>
+            <scope>provided</scope>
+        </dependency>
+        
+        <!-- Note: JWT generation uses pure Java crypto (java.security.Signature)
+             No external JWT library or BouncyCastle needed -->
 
         <!-- Uncomment to use TestKit in your project. Details at https://bitbucket.org/atlassian/jira-testkit -->
         <!-- You can read more about TestKit at https://developer.atlassian.com/display/JIRADEV/Plugin+Tutorial+-+Smarter+integration+testing+with+TestKit -->
@@ -165,6 +228,7 @@
                 <configuration>
                     <productVersion>${jira.version}</productVersion>
                     <productDataVersion>${jira.version}</productDataVersion>
+                    <jvmArgs>-Dsun.net.inetaddr.ttl=60 -Dsun.net.inetaddr.negative.ttl=0</jvmArgs>
                     <!-- Uncomment to install TestKit backdoor in JIRA. -->
                     <!--
                     <pluginArtifacts>
@@ -188,16 +252,17 @@
                         </Export-Package>
 
                         <!-- Embed only necessary dependencies for DocuSign REST API calls -->
+                        <!-- Explicitly exclude jakarta.*, jersey.*, and DocuSign SDK -->
+                        <!-- JWT support requires bundled BouncyCastle for ASN.1/CMS classes -->
                         <Embed-Dependency>
                             groupId=org.apache.httpcomponents;artifactId=httpclient;inline=true;scope=compile,
                             groupId=com.google.code.gson;artifactId=gson;inline=true;scope=compile,
-                            groupId=com.auth0;artifactId=java-jwt;inline=true;scope=compile,
                             groupId=org.bouncycastle;artifactId=bcprov-jdk15on;inline=true;scope=compile,
                             groupId=org.bouncycastle;artifactId=bcpkix-jdk15on;inline=true;scope=compile
                         </Embed-Dependency>
                         <Embed-Transitive>false</Embed-Transitive>
 
-                        <!-- Import packages - make third-party packages optional -->
+                        <!-- Import packages - explicitly exclude jakarta.* and jersey.* for OSGi safety -->
                         <Import-Package>
                             org.springframework.osgi.*;resolution:="optional",
                             org.eclipse.gemini.blueprint.*;resolution:="optional",
@@ -205,6 +270,11 @@
                             org.apache.log.*;resolution:="optional",
                             javafx.*;resolution:="optional",
                             com.sun.el.*;resolution:="optional",
+                            !sun.java2d.cmm.*,
+                            !jakarta.*,
+                            !org.glassfish.jersey.*,
+                            !javax.ws.rs.client.jaxrs.ri.*,
+                            !com.docusign.esign.*,
                             !jdk.internal.*,
                             *
                         </Import-Package>

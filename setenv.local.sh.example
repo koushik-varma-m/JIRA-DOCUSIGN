@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Local-only secrets (do not commit). Copy to setenv.local.sh and fill values.
+
+# ngrok (required for stable webhook tunnel)
+# Get from: https://dashboard.ngrok.com/get-started/your-authtoken
+export NGROK_AUTHTOKEN="REPLACE_ME"
+

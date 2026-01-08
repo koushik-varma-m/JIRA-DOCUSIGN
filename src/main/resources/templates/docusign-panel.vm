@@ -1,4 +1,2388 @@
-<div class="aui-message aui-message-info">
-    <p><strong>DocuSign Integration</strong></p>
-    <p>This is your DocuSign panel. We'll soon show attachments here.</p>
+<div class="docusign-panel">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+        <span class="docusign-logo">DS</span>
+    </div>
+    
+	    <div id="docusign-position-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:200000; align-items:center; justify-content:center; visibility:hidden;">
+	        <div id="docusign-position-content" style="background:#fff; padding:16px; border-radius:6px; width:520px; max-width:90%; box-shadow:0 12px 30px rgba(0,0,0,0.3);">
+	            <h4 style="margin-top:0;">Click to place signature</h4>
+	            <p style="margin-bottom:8px;">Click inside the preview to set X/Y. Use Page to switch page number.</p>
+	            <div style="display:flex; gap:8px; align-items:center; justify-content:flex-start; margin-bottom:8px;">
+	                <label style="min-width:60px;">Document</label>
+	                <select id="docusign-position-attachment-select" class="aui-select" style="flex:1; min-width:200px;"></select>
+	            </div>
+	            <div id="docusign-position-file" style="font-size:12px; color:#6b778c; margin-bottom:8px;">Preview: (select an attachment)</div>
+	            <div style="display:flex; gap:8px; align-items:center; justify-content:flex-start; margin-bottom:8px;">
+	                <label style="min-width:60px;">Page</label>
+	                <input type="number" min="1" id="docusign-position-page-input" class="aui-input" value="1" style="width:80px;">
+	                <span id="docusign-position-page-max" style="font-size:12px; color:#6b778c;"></span>
+	            </div>
+	            <div id="docusign-position-page" style="background:#f7f7f7; border:1px solid #dcdcdc; width:420px; height:560px; margin:0 auto 12px; position:relative; cursor:crosshair; box-shadow:inset 0 0 4px rgba(0,0,0,0.1); overflow:hidden;">
+	                <canvas id="docusign-position-canvas" style="position:absolute; left:50%; top:50%; transform:translate(-50%, -50%);"></canvas>
+	                <div id="docusign-position-loading" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:12px; text-align:center; color:#6b778c; font-size:12px;">
+	                    Select a PDF/image attachment to preview.
+	                </div>
+	            </div>
+            <div id="docusign-position-preview" style="text-align:center; margin-bottom:12px; color:#4c4c4c; font-size:12px;">Click on the page to place the signature (page 1)</div>
+	            <div style="text-align:right; display:flex; gap:8px; justify-content:flex-end;">
+	                <button id="docusign-position-cancel" class="aui-button aui-button-subtle">Cancel</button>
+	                <button id="docusign-position-apply" class="aui-button aui-button-primary">Use position</button>
+            </div>
+        </div>
+    </div>
+    <style>
+        .docusign-current-row { background: #f0f5ff; border-left: 4px solid #4c9aff; }
+        .docusign-pending-row { opacity: 0.6; }
+        .docusign-logo {
+            display:inline-flex;
+            align-items:center;
+            justify-content:center;
+            width:30px;
+            height:30px;
+            border-radius:8px;
+            background: linear-gradient(135deg, #1d4ed8, #0ea5e9);
+            color:#fff;
+            font-weight:700;
+            font-size:12px;
+            letter-spacing:0.5px;
+        }
+        #docusign-position-modal { display:none; }
+        #docusign-position-modal.docusign-active { display:flex !important; }
+    </style>
+    
+	    <script type="text/javascript">
+	        // Expose issue key for JS payloads
+	        window.docuSignIssueKey = '$!{issueKey}';
+	        window.docuSignAssigneeUserKey = '$!{assigneeUserKey}';
+	        window.docuSignWebhookEnabled = #if($webhookEnabled)true#else false#end;
+	        window.docuSignInitialState = {
+	            envelopeId: '$!{envelopeIdJs}',
+	            envelopeStatus: '$!{envelopeStatusJs}',
+            signerUiStateJson: '$!{signerUiStateJs}'
+        };
+    </script>
+    
+    ## Result section (initially hidden)
+    <div id="docusign-result" class="aui-message" style="display: none;">
+        <span class="aui-icon"></span>
+        <p id="docusign-result-message"></p>
+    </div>
+    
+    ## DocuSign Connection Status Section
+    <div class="aui-group">
+        <div class="aui-item">
+            <div id="docusign-connection-status">
+                ## Will be populated by JavaScript
+                <div class="aui-message aui-message-info">
+                    <p>Checking DocuSign connection status...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script type="text/javascript">
+        (function() {
+            'use strict';
+            
+            // Lightweight DOM helpers
+            function $(selector) { return document.querySelector(selector); }
+            function html(el, markup) { if (el) { el.innerHTML = markup; } }
+            function on(el, evt, handler) { if (el) { el.addEventListener(evt, handler, false); } }
+            
+            function contextPath() {
+                if (typeof AJS !== 'undefined' && AJS.contextPath) {
+                    return AJS.contextPath() || '';
+                }
+                // Fallback: derive from path (assumes /jira as default context)
+                var path = window.location.pathname || '';
+                return path.indexOf('/jira') === 0 ? '/jira' : '';
+            }
+            
+            function buildStatusUrl() {
+                return contextPath() + '/rest/docusign/1.0/send/status';
+            }
+            
+            function buildConnectUrl() {
+                var ret = encodeURIComponent(window.location.href || '');
+                return contextPath() + '/plugins/servlet/docusign/connect?returnUrl=' + ret;
+            }
+            
+            function renderConnected() {
+                var statusDiv = $('#docusign-connection-status');
+                if (!statusDiv) return;
+                statusDiv.setAttribute('data-ds-connected', 'true');
+                var statusBox = $('#docusign-envelope-status');
+                if (statusBox) {
+                    statusBox.style.display = 'block';
+                }
+                statusDiv.innerHTML =
+                    '<div class="aui-message aui-message-success">' +
+                    '<span class="aui-icon aui-icon-small aui-iconfont-success"></span>' +
+                    '<p><strong>DocuSign Connected</strong></p>' +
+                    '<p>You are successfully connected to DocuSign. You can now send documents for signing.</p>' +
+                    '<p style="margin-top:8px;">' +
+                    '<button id="docusign-disconnect-button" class="aui-button aui-button-link">Disconnect</button>' +
+                    '</p>' +
+                    '</div>';
+                var dBtn = $('#docusign-disconnect-button');
+                on(dBtn, 'click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    fetch(contextPath() + '/rest/docusign/1.0/send/auth/disconnect', {
+                        method: 'POST',
+                        headers: { 'X-Atlassian-Token': 'no-check' },
+                        credentials: 'include'
+                    }).then(function() {
+                        checkConnectionStatus();
+                    }).catch(function() {
+                        checkConnectionStatus();
+                    });
+                    return false;
+                });
+            }
+
+            function renderConnectPrompt(message, isWarning) {
+                var statusDiv = $('#docusign-connection-status');
+                if (statusDiv) {
+                    statusDiv.removeAttribute('data-ds-connected');
+                }
+                var statusBox = document.querySelector('#docusign-envelope-status');
+                if (statusBox) {
+                    statusBox.style.display = 'none';
+                }
+                var signedBox = document.querySelector('#docusign-signed-download');
+                if (signedBox) {
+                    signedBox.style.display = 'none';
+                    signedBox.innerHTML = '';
+                }
+                html(statusDiv,
+                    '<div class="aui-message ' + (isWarning ? 'aui-message-warning' : 'aui-message-info') + '">' +
+                    '<p><strong>Connect to DocuSign</strong></p>' +
+                    '<p>' + message + '</p>' +
+                    '<button id="docusign-connect-button" class="aui-button aui-button-primary" style="margin-top: 10px;">' +
+                    '<span class="aui-icon aui-icon-small aui-iconfont-link"></span> Connect DocuSign' +
+                    '</button>' +
+                    '</div>'
+                );
+                var btn = $('#docusign-connect-button');
+                on(btn, 'click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    window.location.href = buildConnectUrl();
+                    return false;
+                });
+            }
+            
+            function checkConnectionStatus() {
+                var statusUrl = buildStatusUrl();
+                // Use fetch (works without jQuery/AJS)
+                fetch(statusUrl, { credentials: 'include' })
+                    .then(function(resp) {
+                        return resp.text().then(function(txt) {
+                            var body = null;
+                            try { body = JSON.parse(txt); } catch (e) { body = { __raw: txt }; }
+                            return { status: resp.status, body: body || {} };
+                        });
+                    })
+                    .then(function(res) {
+                        var data = res.body || {};
+                        if (res.status >= 200 && res.status < 300 && data && data.connected === true) {
+                            renderConnected();
+                        } else {
+                            var msg = 'You need to connect your DocuSign account before sending documents for signing.';
+                            if (res.status === 401) {
+                                msg = 'Your Jira session is not active. Refresh the page and try again.';
+                            } else if (res.status === 403) {
+                                msg = 'You don’t have permission to connect DocuSign on this Jira instance.';
+                            } else if (data && data.error) {
+                                msg = String(data.error);
+                            }
+                            var isWarn = res.status >= 400;
+                            renderConnectPrompt(msg, isWarn);
+                            try {
+                                if (window.docuSignUi && window.docuSignUi.notify && isWarn) {
+                                    window.docuSignUi.notify('warning', msg, { dedupeKey: 'connectStatus', dedupeMs: 15000 });
+                                }
+                            } catch (e) {}
+                        }
+                    })
+                    .catch(function(err) {
+                        var msg2 = 'Unable to verify DocuSign connection status. Reload the page and try again.';
+                        if (err && err.message) msg2 = msg2 + ' (' + err.message + ')';
+                        renderConnectPrompt(msg2, true);
+                        try {
+                            if (window.docuSignUi && window.docuSignUi.notify) {
+                                window.docuSignUi.notify('warning', msg2, { dedupeKey: 'connectStatus', dedupeMs: 15000 });
+                            }
+                        } catch (e) {}
+                    });
+            }
+            
+            // Run when DOM is ready
+            var init = function() { setTimeout(checkConnectionStatus, 50); };
+            if (document.readyState === 'complete' || document.readyState === 'interactive') {
+                init();
+            } else {
+                document.addEventListener('DOMContentLoaded', init);
+            }
+            
+            // Re-check when the issue panel is refreshed dynamically
+            if (typeof JIRA !== 'undefined' && JIRA.bind) {
+                JIRA.bind('issue-refreshed', function () {
+                    setTimeout(checkConnectionStatus, 50);
+                });
+            }
+            
+            // Fallback: poll once after 2s in case of slow resource loading
+            setTimeout(checkConnectionStatus, 2000);
+            
+        })();
+    </script>
+    
+    ## Attachments section
+    <div class="aui-group">
+        <div class="aui-item">
+            <h4>Select Attachments</h4>
+            #if($attachments && $attachments.size() > 0)
+                <div class="docusign-attachments">
+                    #foreach($attachment in $attachments)
+                        #if($attachment)
+                            <div class="aui-field-row">
+                                <input type="checkbox" 
+                                       class="docusign-attachment-checkbox" 
+                                       id="attachment-$!{attachment.id}" 
+                                       value="$!{attachment.id}"
+                                       data-filename="$!{attachment.filename}" />
+                                <label for="attachment-$!{attachment.id}">$!{attachment.filename}</label>
+                            </div>
+                        #end
+                    #end
+                </div>
+            #else
+                <div class="aui-message aui-message-info">
+                    <p>No attachments available for this issue.</p>
+                </div>
+            #end
+        </div>
+    </div>
+    
+    ## Signers section
+    <div class="aui-group">
+        <div class="aui-item">
+            <h4>Signers</h4>
+            <div id="docusign-signers-list">
+                ## Signer selects will be added here dynamically
+            </div>
+            #if(!$envelopeId || $envelopeId == "")
+            <div style="display:flex; gap:8px; margin-top:8px;">
+                <button id="docusign-add-signer" class="aui-button aui-button-subtle">
+                    <span class="aui-icon aui-icon-small aui-iconfont-add"></span> Add Signer
+                </button>
+                <button id="docusign-add-external-signer" class="aui-button aui-button-subtle">
+                    <span class="aui-icon aui-icon-small aui-iconfont-add"></span> Add External Signer
+                </button>
+            </div>
+            #end
+        </div>
+    </div>
+    
+    ## Send button
+    <div class="aui-group">
+        <div class="aui-item">
+            <div id="docusign-envelope-status" class="aui-message aui-message-info" style="display:none;margin-bottom:8px;"></div>
+            <div id="docusign-signed-download" class="aui-message aui-message-success" style="display:none;margin-bottom:8px;"></div>
+            <button id="docusign-send-button" class="aui-button aui-button-primary" #if($envelopeId && $envelopeId != "")disabled="disabled"#end>
+                Send to DocuSign
+            </button>
+            <button id="docusign-check-status" class="aui-button aui-button-subtle" style="margin-left:8px;">
+                Check Signing Status
+            </button>
+            <button id="docusign-attach-signed" class="aui-button aui-button-subtle" style="margin-left:8px; display:none;">
+                Fetch Signed PDF
+            </button>
+            <button id="docusign-edit-resend" class="aui-button aui-button-subtle" style="margin-left:8px; display:none;">
+                Edit &amp; Resend
+            </button>
+        </div>
+    </div>
+
+    ## Envelope history (AO-backed)
+    <div class="aui-group">
+        <div class="aui-item">
+            <h4>Envelope History</h4>
+            <div id="docusign-envelope-history" class="aui-message aui-message-info" style="display:none;margin-bottom:8px;"></div>
+        </div>
+    </div>
 </div>
+
+<script type="text/javascript">
+(function() {
+    'use strict';
+
+    var projectUsers = [];
+    // Note: don't build arrays with Velocity foreach commas; Jira's Velocity may not support `$foreach.hasNext`.
+    (function() {
+        try {
+            var b64 = '$!{projectUsersJsonB64}';
+            if (b64 && b64.trim() && typeof window.atob === 'function') {
+                var decoded = window.atob(b64);
+                var parsed = JSON.parse(decoded);
+                if (Array.isArray(parsed)) {
+                    projectUsers = parsed;
+                    return;
+                }
+            }
+        } catch (e) {
+        }
+        // Fallback (legacy): JSON string may be HTML-escaped by Jira renderer.
+        try {
+            var json = '$!{projectUsersJsonJs}';
+            if (!json || !json.trim()) return;
+            // Decode common HTML entities (script blocks do not decode them)
+            json = json.replace(/\\&quot;|&quot;/g, '\"')
+                       .replace(/\\&#39;|&#39;/g, "'")
+                       .replace(/\\&amp;|&amp;/g, '&')
+                       .replace(/\\&lt;|&lt;/g, '<')
+                       .replace(/\\&gt;|&gt;/g, '>');
+            var parsed2 = JSON.parse(json);
+            if (Array.isArray(parsed2)) {
+                projectUsers = parsed2;
+            }
+        } catch (e2) {
+            projectUsers = [];
+        }
+    })();
+
+	    function $(selector) { return document.querySelector(selector); }
+	    function $all(selector) { return Array.prototype.slice.call(document.querySelectorAll(selector)); }
+	    function parseJsonSafe(resp) {
+	        return resp.text().then(function(txt) {
+	            try { return JSON.parse(txt); }
+	            catch (e) { return { __raw: txt }; }
+	        }).then(function(body){ return { status: resp.status, body: body }; });
+	    }
+
+	    // Shared UI helpers (used across script blocks)
+	    (function initDocuSignUiHelpers() {
+	        if (window.docuSignUi) return;
+	        var lastByKey = {};
+	        function cls(kind) {
+	            var k = (kind || '').toLowerCase();
+	            if (k === 'success') return 'aui-message-success';
+	            if (k === 'warning') return 'aui-message-warning';
+	            if (k === 'error') return 'aui-message-error';
+	            return 'aui-message-info';
+	        }
+	        function notify(kind, message, opts) {
+	            opts = opts || {};
+	            var dedupeKey = opts.dedupeKey;
+	            var dedupeMs = (typeof opts.dedupeMs === 'number' && opts.dedupeMs > 0) ? opts.dedupeMs : 0;
+	            if (dedupeKey) {
+	                var now = Date.now();
+	                var prev = lastByKey[dedupeKey];
+	                var sig = String(kind || '') + '|' + String(message || '');
+	                if (prev && prev.sig === sig && (now - prev.at) < dedupeMs) {
+	                    return;
+	                }
+	                lastByKey[dedupeKey] = { sig: sig, at: now };
+	            }
+	            var box = document.querySelector('#docusign-result');
+	            var msgEl = document.querySelector('#docusign-result-message');
+	            if (!box || !msgEl) return;
+	            box.style.display = 'block';
+	            box.className = 'aui-message ' + cls(kind);
+	            msgEl.textContent = message || '';
+	        }
+	        function extractError(res, fallback) {
+	            try {
+	                if (res && res.body) {
+	                    if (res.body.error) return String(res.body.error);
+	                    if (res.body.message) return String(res.body.message);
+	                    if (res.body.__raw && String(res.body.__raw).trim()) return String(res.body.__raw).trim().slice(0, 300);
+	                }
+	            } catch (e) {}
+	            if (res && typeof res.status === 'number') {
+	                return (fallback || 'Request failed') + ' (HTTP ' + res.status + ')';
+	            }
+	            return fallback || 'Request failed';
+	        }
+	        function friendly(kind, res, fallback) {
+	            var status = res && typeof res.status === 'number' ? res.status : 0;
+	            if (status === 401) {
+	                return 'DocuSign is not connected. Click “Connect DocuSign” and try again.';
+	            }
+	            if (status === 403) {
+	                return extractError(res, 'You don’t have permission to perform this action.');
+	            }
+	            var msg = extractError(res, fallback);
+	            if (msg && (msg.indexOf('DOCUSIGN_CLIENT_ID') >= 0 || msg.indexOf('DOCUSIGN_REDIRECT_URI') >= 0)) {
+	                msg += ' (Ask a Jira admin to review DocuSign settings at /plugins/servlet/docusign/admin.)';
+	            }
+	            return msg;
+	        }
+	        window.docuSignUi = {
+	            notify: notify,
+	            extractError: extractError,
+	            friendly: friendly
+	        };
+	    })();
+	    function ctxPath() {
+	        if (typeof AJS !== 'undefined' && AJS.contextPath) {
+	            return AJS.contextPath() || '';
+	        }
+        var path = window.location.pathname || '';
+        return path.indexOf('/jira') === 0 ? '/jira' : '';
+    }
+    window.docuSignCtxPath = ctxPath;
+	    function html(el, markup) { if (el) { el.innerHTML = markup; } }
+		    function on(el, evt, handler) { if (el) { el.addEventListener(evt, handler, false); } }
+		    var posModal = document.getElementById('docusign-position-modal');
+		    var posPage = document.getElementById('docusign-position-page');
+		    var posCanvas = document.getElementById('docusign-position-canvas');
+		    var posLoading = document.getElementById('docusign-position-loading');
+		    var posAttachmentSelect = document.getElementById('docusign-position-attachment-select');
+		    var posFile = document.getElementById('docusign-position-file');
+		    var posPageMax = document.getElementById('docusign-position-page-max');
+		    var posPreview = document.getElementById('docusign-position-preview');
+		    var posCancel = document.getElementById('docusign-position-cancel');
+		    var posApply = document.getElementById('docusign-position-apply');
+		    var posPageInput = document.getElementById('docusign-position-page-input');
+
+    // Ensure modal is attached to body to avoid clipping inside Jira panels
+    if (posModal && posModal.parentNode !== document.body) {
+        document.body.appendChild(posModal);
+    }
+
+	    function ensureModalRefs() {
+	        if (!posModal) posModal = document.getElementById('docusign-position-modal');
+	        if (!posPage) posPage = document.getElementById('docusign-position-page');
+	        if (!posCanvas) posCanvas = document.getElementById('docusign-position-canvas');
+	        if (!posLoading) posLoading = document.getElementById('docusign-position-loading');
+	        if (!posAttachmentSelect) posAttachmentSelect = document.getElementById('docusign-position-attachment-select');
+	        if (!posFile) posFile = document.getElementById('docusign-position-file');
+	        if (!posPageMax) posPageMax = document.getElementById('docusign-position-page-max');
+	        if (!posPreview) posPreview = document.getElementById('docusign-position-preview');
+	        if (!posCancel) posCancel = document.getElementById('docusign-position-cancel');
+	        if (!posApply) posApply = document.getElementById('docusign-position-apply');
+	        if (!posPageInput) posPageInput = document.getElementById('docusign-position-page-input');
+	    }
+	    var currentRowForPos = null;
+	    var currentPosSelection = null;
+	    var currentPreview = {
+	        attachmentId: null,
+	        filename: null,
+	        kind: null, // 'pdf' | 'image' | 'placeholder' | 'none'
+	        numPages: 1,
+	        pageWidthPt: 600,
+	        pageHeightPt: 800,
+	        viewport: null, // pdf.js viewport for current page render (scale-fit)
+	        pageNum: 1
+	    };
+	    var UNKNOWN_MAX_PAGES = 9999;
+	    var pdfDocCache = {}; // attachmentId -> Promise<pdfDoc>
+	    var pdfjsWorkerConfigured = false;
+
+	    function clampInt(val, min, max, defVal) {
+	        var n = parseInt(val, 10);
+	        if (isNaN(n)) n = defVal;
+	        if (typeof min === 'number' && n < min) n = min;
+	        if (typeof max === 'number' && n > max) n = max;
+	        return n;
+	    }
+
+		    function setPositionUiPageLimit(maxPages, maxLabelText) {
+		        ensureModalRefs();
+		        var maxVal = (typeof maxPages === 'number' && maxPages > 0) ? maxPages : 1;
+		        if (posPageInput) {
+		            posPageInput.min = '1';
+		            posPageInput.max = String(maxVal);
+		            posPageInput.value = String(clampInt(posPageInput.value, 1, maxVal, 1));
+		            if (currentPosSelection) {
+		                currentPosSelection.page = String(posPageInput.value || '1');
+		            }
+		        }
+	        if (posPageMax) {
+	            if (maxLabelText != null && String(maxLabelText).trim() !== '') {
+	                posPageMax.textContent = '/ ' + String(maxLabelText);
+	            } else {
+	                posPageMax.textContent = (maxVal > 1) ? ('/ ' + maxVal) : '';
+	            }
+	        }
+	        if (currentRowForPos) {
+	            var existingP = currentRowForPos.querySelector('.docusign-page-number');
+	            if (existingP) {
+	                existingP.min = '1';
+	                existingP.max = String(maxVal);
+	                if (existingP.value) {
+	                    existingP.value = String(clampInt(existingP.value, 1, maxVal, 1));
+	                }
+	            }
+	        }
+	    }
+
+		    function getSelectedAttachmentForPreview() {
+		        // Prefer the explicit selection in the modal (when present), else fall back to the first checked attachment.
+		        ensureModalRefs();
+		        var selectedId = null;
+		        if (posAttachmentSelect && posAttachmentSelect.value) {
+		            var v = parseInt(posAttachmentSelect.value, 10);
+		            if (!isNaN(v)) selectedId = v;
+		        }
+		        var cbs = $all('.docusign-attachment-checkbox:checked');
+		        if ((!cbs || !cbs.length) && (selectedId == null)) return null;
+		        var chosenCb = null;
+		        if (selectedId != null && cbs && cbs.length) {
+		            for (var i = 0; i < cbs.length; i++) {
+		                var cid = parseInt(cbs[i].value, 10);
+		                if (!isNaN(cid) && cid === selectedId) { chosenCb = cbs[i]; break; }
+		            }
+		        }
+		        if (!chosenCb) chosenCb = (cbs && cbs.length) ? cbs[0] : null;
+		        if (!chosenCb) return null;
+		        var id = parseInt(chosenCb.value, 10);
+		        if (isNaN(id)) return null;
+		        return { id: id, filename: chosenCb.getAttribute('data-filename') || '' };
+		    }
+
+		    function listSelectedAttachments() {
+		        return $all('.docusign-attachment-checkbox:checked').map(function(cb) {
+		            var id = parseInt(cb.value, 10);
+		            if (isNaN(id)) return null;
+		            return { id: id, filename: cb.getAttribute('data-filename') || '' };
+		        }).filter(function(a) { return !!a; });
+		    }
+
+		    function populateAttachmentSelect(preferredAttachmentId) {
+		        ensureModalRefs();
+		        if (!posAttachmentSelect) return;
+		        var list = listSelectedAttachments();
+		        posAttachmentSelect.innerHTML = '';
+		        if (!list.length) {
+		            posAttachmentSelect.disabled = true;
+		            var opt = document.createElement('option');
+		            opt.value = '';
+		            opt.textContent = 'Select attachments first';
+		            posAttachmentSelect.appendChild(opt);
+		            return;
+		        }
+		        posAttachmentSelect.disabled = false;
+		        list.forEach(function(att) {
+		            var opt2 = document.createElement('option');
+		            opt2.value = String(att.id);
+		            opt2.textContent = att.filename || ('Attachment #' + att.id);
+		            posAttachmentSelect.appendChild(opt2);
+		        });
+		        var target = preferredAttachmentId != null ? parseInt(preferredAttachmentId, 10) : null;
+		        if (target != null && !isNaN(target)) {
+		            posAttachmentSelect.value = String(target);
+		        }
+		        if (!posAttachmentSelect.value) {
+		            posAttachmentSelect.value = String(list[0].id);
+		        }
+		    }
+
+	    function attachmentUrl(att) {
+	        if (!att || !att.id) return '';
+	        var name = att.filename || 'file';
+	        // Jira serves attachments from /secure/attachment/{id}/{filename}
+	        return ctxPath() + '/secure/attachment/' + att.id + '/' + encodeURIComponent(name);
+	    }
+
+	    function isPdfFile(name) {
+	        return !!(name && name.toLowerCase().indexOf('.pdf') === name.length - 4);
+	    }
+
+	    function isImageFile(name) {
+	        return !!(name && (/\.(png|jpe?g|gif|bmp|webp)$/i).test(name));
+	    }
+
+	    function showPreviewMessage(message) {
+	        ensureModalRefs();
+	        if (posLoading) {
+	            posLoading.style.display = 'flex';
+	            posLoading.style.pointerEvents = 'auto';
+	            posLoading.textContent = message || '';
+	        }
+	        currentPreview.kind = 'none';
+	        currentPreview.numPages = 1;
+	        currentPreview.viewport = null;
+	        if (posCanvas) {
+	            // Keep canvas around for click coords; just clear it
+	            try {
+	                var ctx = posCanvas.getContext('2d');
+	                if (ctx) {
+	                    ctx.clearRect(0, 0, posCanvas.width || 0, posCanvas.height || 0);
+	                }
+	            } catch (e) {}
+	            posCanvas.width = 0;
+	            posCanvas.height = 0;
+	        }
+	    }
+
+	    function hidePreviewMessage() {
+	        ensureModalRefs();
+	        if (posLoading) posLoading.style.display = 'none';
+	    }
+
+	    function renderPlaceholderToCanvas(att, pageNum, message, maxPages) {
+	        ensureModalRefs();
+	        hidePreviewMessage();
+	        if (!posCanvas || !posPage) return;
+
+	        // Use the modal viewport size (keeps click mapping stable) and approximate a letter/A4 page.
+	        var w = posPage.clientWidth || 420;
+	        var h = posPage.clientHeight || 560;
+	        posCanvas.width = Math.max(1, Math.floor(w));
+	        posCanvas.height = Math.max(1, Math.floor(h));
+
+	        var ctx = posCanvas.getContext('2d');
+	        if (!ctx) return;
+
+	        ctx.clearRect(0, 0, posCanvas.width, posCanvas.height);
+	        ctx.fillStyle = '#fff';
+	        ctx.fillRect(0, 0, posCanvas.width, posCanvas.height);
+	        ctx.strokeStyle = '#dcdcdc';
+	        ctx.lineWidth = 1;
+	        ctx.strokeRect(0.5, 0.5, posCanvas.width - 1, posCanvas.height - 1);
+
+	        ctx.fillStyle = '#6b778c';
+	        ctx.font = '12px Arial, sans-serif';
+	        var filename = (att && att.filename) ? att.filename : 'Document';
+	        var line1 = 'No preview available for this file type.';
+	        var line2 = message ? String(message) : 'Click to place an approximate signature position.';
+	        var mp = (typeof maxPages === 'number' && maxPages > 0) ? maxPages : UNKNOWN_MAX_PAGES;
+	        var pageLine = (mp > 1)
+	            ? ('Page ' + String(pageNum || 1) + ' (enter page number manually)')
+	            : ('Page ' + String(pageNum || 1));
+
+	        var pad = 16;
+	        ctx.fillText(filename, pad, pad + 12);
+	        ctx.fillText(line1, pad, pad + 36);
+	        ctx.fillText(line2, pad, pad + 54);
+	        ctx.fillText(pageLine, pad, pad + 78);
+
+	        currentPreview.kind = 'placeholder';
+	        currentPreview.viewport = null;
+	        currentPreview.numPages = mp;
+	        currentPreview.pageNum = clampInt(pageNum, 1, mp, 1);
+	        currentPreview.pageWidthPt = 600;
+	        currentPreview.pageHeightPt = 800;
+	    }
+
+	    function renderImageToCanvas(att) {
+	        ensureModalRefs();
+	        if (!posCanvas || !posPage) return Promise.reject(new Error('Preview canvas not available'));
+	        var url = attachmentUrl(att);
+	        hidePreviewMessage();
+	        return fetch(url, { credentials: 'include' })
+	            .then(function(resp) { return resp.blob(); })
+	            .then(function(blob) {
+	                return new Promise(function(resolve, reject) {
+	                    var img = new Image();
+	                    img.onload = function() {
+	                        var maxW = posPage.clientWidth || 420;
+	                        var maxH = posPage.clientHeight || 560;
+	                        var scale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight, 1);
+	                        var w = Math.max(1, Math.floor(img.naturalWidth * scale));
+	                        var h = Math.max(1, Math.floor(img.naturalHeight * scale));
+	                        posCanvas.width = w;
+	                        posCanvas.height = h;
+	                        var ctx = posCanvas.getContext('2d');
+	                        ctx.clearRect(0, 0, w, h);
+	                        ctx.drawImage(img, 0, 0, w, h);
+	                        URL.revokeObjectURL(img.src);
+	                        currentPreview.kind = 'image';
+	                        currentPreview.numPages = 1;
+	                        currentPreview.pageNum = 1;
+	                        currentPreview.viewport = null;
+	                        currentPreview.pageWidthPt = img.naturalWidth;
+	                        currentPreview.pageHeightPt = img.naturalHeight;
+	                        setPositionUiPageLimit(1);
+	                        resolve();
+	                    };
+	                    img.onerror = function() { reject(new Error('Unable to load image preview')); };
+	                    img.src = URL.createObjectURL(blob);
+	                });
+	            });
+	    }
+
+	    function getPdfDoc(att) {
+	        if (!att || !att.id) return Promise.reject(new Error('Invalid attachment'));
+	        if (pdfDocCache[att.id]) return pdfDocCache[att.id];
+	        if (!window.pdfjsLib) return Promise.reject(new Error('PDF renderer not available'));
+	        if (!pdfjsWorkerConfigured && window.pdfjsLib.GlobalWorkerOptions) {
+	            // Ensure the worker script can be found in Jira's web-resource path.
+	            // If Jira blocks workers via CSP, PDF.js will fall back to a fake worker, which still needs this URL.
+	            window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+	                ctxPath() + '/download/resources/com.koushik.docusign.jira-docusign-plugin:jira-docusign-plugin-resources/vendor/pdfjs/pdf.worker.min.js';
+	            pdfjsWorkerConfigured = true;
+	        }
+	        var url = attachmentUrl(att);
+	        pdfDocCache[att.id] = fetch(url, { credentials: 'include' })
+	            .then(function(resp) { return resp.arrayBuffer(); })
+	            .then(function(buf) {
+	                return window.pdfjsLib.getDocument({ data: buf }).promise;
+	            });
+	        return pdfDocCache[att.id];
+	    }
+
+	    function renderPdfPage(att, pageNum) {
+	        ensureModalRefs();
+	        if (!posCanvas || !posPage) return Promise.reject(new Error('Preview canvas not available'));
+	        if (!window.pdfjsLib) return Promise.reject(new Error('PDF renderer not available'));
+	        hidePreviewMessage();
+	        return getPdfDoc(att).then(function(pdf) {
+	            var safePage = clampInt(pageNum, 1, pdf.numPages, 1);
+	            currentPreview.kind = 'pdf';
+	            currentPreview.numPages = pdf.numPages;
+	            currentPreview.pageNum = safePage;
+	            setPositionUiPageLimit(pdf.numPages);
+	            return pdf.getPage(safePage).then(function(page) {
+	                var maxW = posPage.clientWidth || 420;
+	                var maxH = posPage.clientHeight || 560;
+	                var viewport1 = page.getViewport({ scale: 1 });
+	                var scale = Math.min(maxW / viewport1.width, maxH / viewport1.height);
+	                var viewport = page.getViewport({ scale: scale });
+	                posCanvas.width = Math.max(1, Math.floor(viewport.width));
+	                posCanvas.height = Math.max(1, Math.floor(viewport.height));
+	                var ctx = posCanvas.getContext('2d');
+	                ctx.clearRect(0, 0, posCanvas.width, posCanvas.height);
+	                currentPreview.viewport = viewport;
+	                currentPreview.pageWidthPt = viewport1.width;
+	                currentPreview.pageHeightPt = viewport1.height;
+	                return page.render({ canvasContext: ctx, viewport: viewport }).promise;
+	            });
+	        });
+	    }
+
+	    function loadAttachmentPreviewForModal(att, pageNum) {
+	        ensureModalRefs();
+	        if (!att) {
+	            currentPreview.attachmentId = null;
+	            currentPreview.filename = null;
+	            currentPreview.kind = 'none';
+	            setPositionUiPageLimit(1);
+	            if (posFile) posFile.textContent = 'Preview: (select an attachment)';
+	            showPreviewMessage('Select an attachment to preview/place.');
+	            return Promise.resolve();
+	        }
+	        currentPreview.attachmentId = att.id;
+	        currentPreview.filename = att.filename || '';
+	        if (posFile) {
+	            var hint = '';
+	            var checkedCount = $all('.docusign-attachment-checkbox:checked').length;
+	            if (checkedCount > 1) {
+	                hint = ' (using first selected attachment for preview)';
+	            }
+	            posFile.textContent = 'Preview: ' + (att.filename || ('Attachment #' + att.id)) + hint;
+	        }
+	        if (isPdfFile(att.filename)) {
+	            if (!window.pdfjsLib) {
+	                setPositionUiPageLimit(UNKNOWN_MAX_PAGES, '?');
+	                renderPlaceholderToCanvas(att, pageNum, 'PDF preview requires PDF.js (pdf.min.js).', UNKNOWN_MAX_PAGES);
+	                return Promise.resolve();
+	            }
+	            return renderPdfPage(att, pageNum).catch(function(e) {
+	                setPositionUiPageLimit(UNKNOWN_MAX_PAGES, '?');
+	                renderPlaceholderToCanvas(att, pageNum, 'Failed to render PDF preview: ' + (e && e.message ? e.message : 'Unknown error'), UNKNOWN_MAX_PAGES);
+	            });
+	        }
+	        if (isImageFile(att.filename)) {
+	            return renderImageToCanvas(att).catch(function(e) {
+	                setPositionUiPageLimit(1);
+	                renderPlaceholderToCanvas(att, 1, 'Failed to render image preview: ' + (e && e.message ? e.message : 'Unknown error'), 1);
+	            });
+	        }
+	        setPositionUiPageLimit(UNKNOWN_MAX_PAGES, '?');
+	        renderPlaceholderToCanvas(att, pageNum, 'Click to place an approximate position.', UNKNOWN_MAX_PAGES);
+	        return Promise.resolve();
+	    }
+
+	    function closePositionModal() {
+	        if (posModal) {
+	            posModal.style.display = 'none';
+	            posModal.style.visibility = 'hidden';
+	            posModal.classList.remove('docusign-active');
+	        }
+	        currentRowForPos = null;
+	        currentPosSelection = null;
+	    }
+
+	    function getPositionsForRow(row) {
+	        if (!row) return [];
+	        try {
+	            var raw = row.getAttribute('data-positions');
+	            if (!raw) return [];
+	            var arr = JSON.parse(raw);
+	            return Array.isArray(arr) ? arr : [];
+	        } catch (e) {
+	            return [];
+	        }
+	    }
+
+	    function setPositionPreviewText(page, hasPoint) {
+	        if (!posPreview) return;
+	        var p = page || '1';
+	        if (hasPoint) {
+	            posPreview.textContent = 'Position selected (page ' + p + ')';
+	        } else {
+	            posPreview.textContent = 'Click on the page to place the signature (page ' + p + ')';
+	        }
+	    }
+
+	    function ensureMarker() {
+	        ensureModalRefs();
+	        if (!posPage) return null;
+	        var marker = posPage.querySelector('.docusign-pos-marker');
+	        if (!marker) {
+	            marker = document.createElement('div');
+	            marker.className = 'docusign-pos-marker';
+	            marker.style.position = 'absolute';
+	            marker.style.width = '10px';
+	            marker.style.height = '10px';
+	            marker.style.borderRadius = '50%';
+	            marker.style.background = '#0052cc';
+	            marker.style.transform = 'translate(-50%, -50%)';
+	            posPage.appendChild(marker);
+	        }
+	        return marker;
+	    }
+
+	    function positionMarkerFromDocCoords(docX, docYTop) {
+	        ensureModalRefs();
+	        var marker = ensureMarker();
+	        if (!marker || !posCanvas || !posPage) return;
+	        if (docX == null || docYTop == null) {
+	            marker.style.left = '50%';
+	            marker.style.top = '50%';
+	            return;
+	        }
+	        var canvasRect = posCanvas.getBoundingClientRect();
+	        var containerRect = posPage.getBoundingClientRect();
+	        var xInCanvas, yInCanvas;
+	        if (currentPreview && currentPreview.kind === 'pdf' && currentPreview.viewport && typeof currentPreview.viewport.convertToViewportPoint === 'function') {
+	            var pdfY = (currentPreview.pageHeightPt || 0) - docYTop; // convert top-left to PDF bottom-left
+	            var vp = currentPreview.viewport.convertToViewportPoint(docX, pdfY);
+	            xInCanvas = vp[0];
+	            yInCanvas = vp[1];
+	        } else {
+	            // image/fallback scaling
+	            var wPt = currentPreview && currentPreview.pageWidthPt ? currentPreview.pageWidthPt : 600;
+	            var hPt = currentPreview && currentPreview.pageHeightPt ? currentPreview.pageHeightPt : 800;
+	            xInCanvas = (docX / wPt) * (canvasRect.width || 1);
+	            yInCanvas = (docYTop / hPt) * (canvasRect.height || 1);
+	        }
+	        var xInContainer = (canvasRect.left - containerRect.left) + xInCanvas;
+	        var yInContainer = (canvasRect.top - containerRect.top) + yInCanvas;
+	        marker.style.left = xInContainer + 'px';
+	        marker.style.top = yInContainer + 'px';
+	    }
+
+		    function openPositionModal(row, editIndex) {
+		        ensureModalRefs();
+		        if (!row || !posModal || !posPage) return;
+		        currentRowForPos = row;
+		        var positions = getPositionsForRow(row);
+		        var idx = (typeof editIndex === 'number' && editIndex >= 0) ? editIndex : null;
+		        var editing = (idx != null && positions[idx]) ? positions[idx] : null;
+		        var preferredAttachmentId = (editing && editing.attachmentId != null) ? editing.attachmentId : null;
+		        populateAttachmentSelect(preferredAttachmentId);
+		        var att = getSelectedAttachmentForPreview();
+		        var initialPage = clampInt((editing && editing.pageNumber) ? editing.pageNumber : '1', 1, 9999, 1);
+		        currentPosSelection = {
+		            page: String(initialPage),
+		            x: (editing && editing.xPosition != null) ? parseInt(editing.xPosition, 10) : null,
+	            y: (editing && editing.yPosition != null) ? parseInt(editing.yPosition, 10) : null,
+	            editIndex: idx,
+	            attachmentId: (att && att.id) ? att.id : null
+	        };
+	        if (posPageInput) posPageInput.value = currentPosSelection.page || '1';
+	        setPositionPreviewText(currentPosSelection.page, currentPosSelection.x != null && currentPosSelection.y != null);
+	        var marker = ensureMarker();
+	        if (marker) {
+	            marker.style.left = '50%';
+	            marker.style.top = '50%';
+	        }
+	        loadAttachmentPreviewForModal(att, initialPage).then(function() {
+	            if (currentPosSelection && currentPosSelection.x != null && currentPosSelection.y != null) {
+	                positionMarkerFromDocCoords(currentPosSelection.x, currentPosSelection.y);
+	            }
+	        });
+	        posModal.classList.add('docusign-active');
+	        posModal.style.display = 'flex';
+	        posModal.style.visibility = 'visible';
+	    }
+
+	    function attachPositionPicker(button, row) {
+	        ensureModalRefs();
+	        if (!button || !row || !posModal || !posPage) return;
+	        on(button, 'click', function(e) {
+	            e.preventDefault();
+	            openPositionModal(row, null);
+	        });
+	    }
+
+	    ensureModalRefs();
+	    if (posPage) {
+	        posPage.addEventListener('click', function(ev) {
+	            if (!currentRowForPos) return;
+	            ensureModalRefs();
+	            if (!posCanvas) return;
+	            var canvasRect = posCanvas.getBoundingClientRect();
+	            var containerRect = posPage.getBoundingClientRect();
+	            var xInCanvas = ev.clientX - canvasRect.left;
+	            var yInCanvas = ev.clientY - canvasRect.top;
+	            if (xInCanvas < 0 || yInCanvas < 0 || xInCanvas > canvasRect.width || yInCanvas > canvasRect.height) {
+	                return;
+	            }
+	            var xInContainer = (canvasRect.left - containerRect.left) + xInCanvas;
+	            var yInContainer = (canvasRect.top - containerRect.top) + yInCanvas;
+	            var marker = posPage.querySelector('.docusign-pos-marker');
+	            if (marker) {
+	                marker.style.left = xInContainer + 'px';
+	                marker.style.top = yInContainer + 'px';
+	            }
+	            var docX, docY;
+	            if (currentPreview && currentPreview.kind === 'pdf' && currentPreview.viewport && typeof currentPreview.viewport.convertToPdfPoint === 'function') {
+	                var pdfPoint = currentPreview.viewport.convertToPdfPoint(xInCanvas, yInCanvas); // [x,y] origin bottom-left
+	                docX = Math.round(pdfPoint[0]);
+	                docY = Math.round((currentPreview.pageHeightPt || 0) - pdfPoint[1]); // convert to top-left origin
+	            } else if (currentPreview && currentPreview.kind === 'image') {
+	                var w = canvasRect.width || 1;
+	                var h = canvasRect.height || 1;
+	                docX = Math.round((xInCanvas / w) * (currentPreview.pageWidthPt || 600));
+	                docY = Math.round((yInCanvas / h) * (currentPreview.pageHeightPt || 800));
+	            } else {
+	                // Fallback: scale to typical DocuSign coordinates
+	                var fw = canvasRect.width || 1;
+	                var fh = canvasRect.height || 1;
+	                docX = Math.round((xInCanvas / fw) * 600);
+	                docY = Math.round((yInCanvas / fh) * 800);
+	            }
+	            currentPosSelection = currentPosSelection || { page: '1' };
+	            if (posPageInput && posPageInput.value) {
+	                currentPosSelection.page = String(clampInt(posPageInput.value, 1, clampInt(posPageInput.max, 1, 9999, 1), 1));
+	                posPageInput.value = currentPosSelection.page;
+	            }
+	            currentPosSelection.x = docX;
+	            currentPosSelection.y = docY;
+	            setPositionPreviewText(currentPosSelection.page || '1', true);
+	        });
+	    }
+	    if (posPageInput) {
+	        posPageInput.addEventListener('change', function() {
+	            currentPosSelection = currentPosSelection || {};
+	            var maxPages = clampInt(posPageInput.max, 1, 9999, 1);
+	            var newPage = clampInt(posPageInput.value, 1, maxPages, 1);
+	            posPageInput.value = String(newPage);
+	            currentPosSelection.page = String(newPage);
+	            setPositionPreviewText(currentPosSelection.page, currentPosSelection.x != null && currentPosSelection.y != null);
+	            var att = getSelectedAttachmentForPreview();
+	            if (att) {
+	                loadAttachmentPreviewForModal(att, newPage);
+	            }
+	        });
+	    }
+	    if (posAttachmentSelect) {
+	        posAttachmentSelect.addEventListener('change', function() {
+	            ensureModalRefs();
+	            if (!currentRowForPos) return;
+	            var att = getSelectedAttachmentForPreview();
+	            if (currentPosSelection) {
+	                currentPosSelection.attachmentId = (att && att.id) ? att.id : null;
+	            }
+	            var page = 1;
+	            if (currentPosSelection && currentPosSelection.page) {
+	                page = clampInt(currentPosSelection.page, 1, 9999, 1);
+	            } else if (posPageInput && posPageInput.value) {
+	                page = clampInt(posPageInput.value, 1, 9999, 1);
+	            }
+	            loadAttachmentPreviewForModal(att, page);
+	        });
+	    }
+	    if (posCancel) {
+	        posCancel.addEventListener('click', function(e) {
+	            e.preventDefault();
+	            closePositionModal();
+	        });
+    }
+	    if (posApply) {
+	        posApply.addEventListener('click', function(e) {
+	            e.preventDefault();
+	            if (currentRowForPos && currentPosSelection) {
+	                // store/update position list (do not display coordinates in UI)
+	                var posArr = getPositionsForRow(currentRowForPos);
+	                var att = getSelectedAttachmentForPreview();
+	                var entry = {
+	                    attachmentId: (att && att.id) ? att.id : (currentPosSelection.attachmentId != null ? currentPosSelection.attachmentId : null),
+	                    filename: (att && att.filename) ? att.filename : '',
+	                    pageNumber: currentPosSelection.page || '1',
+	                    xPosition: currentPosSelection.x,
+	                    yPosition: currentPosSelection.y
+	                };
+	                if (typeof currentPosSelection.editIndex === 'number' && currentPosSelection.editIndex >= 0 && currentPosSelection.editIndex < posArr.length) {
+	                    posArr[currentPosSelection.editIndex] = entry;
+	                } else {
+	                    posArr.push(entry);
+	                }
+	                currentRowForPos.setAttribute('data-positions', JSON.stringify(posArr));
+	                renderPositionPills(currentRowForPos, posArr);
+	            }
+	            closePositionModal();
+	        });
+	    }
+    document.addEventListener('keydown', function(ev) {
+        if (ev.key === 'Escape' && posModal && posModal.style.display === 'flex') {
+            closePositionModal();
+        }
+    });
+
+		    function renderPositionPills(row, posArr) {
+		        var list = row.querySelector('.docusign-pos-list');
+		        if (!list) return;
+		        list.innerHTML = '';
+		        (posArr || []).forEach(function(pos, idx) {
+		            var pill = document.createElement('span');
+		            pill.className = 'aui-lozenge aui-lozenge-subtle';
+		            pill.style.display = 'inline-flex';
+		            pill.style.alignItems = 'center';
+		            pill.style.gap = '4px';
+		            var label = '';
+		            if (pos && pos.filename) {
+		                label = pos.filename + ' · ';
+		            }
+		            label += 'Page ' + ((pos && pos.pageNumber) ? pos.pageNumber : '1');
+		            pill.textContent = label;
+		            pill.style.cursor = 'pointer';
+		            pill.title = 'Click to edit';
+		            pill.addEventListener('click', function(ev) {
+		                ev.preventDefault();
+		                openPositionModal(row, idx);
+	            });
+	            var sep = document.createElement('span');
+	            sep.textContent = '';
+	            pill.appendChild(sep);
+	            var rm = document.createElement('a');
+	            rm.href = '#';
+	            rm.textContent = '×';
+	            rm.style.marginLeft = '6px';
+	            rm.addEventListener('click', function(ev) {
+	                ev.preventDefault();
+	                ev.stopPropagation();
+	                var arr = [];
+	                try {
+	                    var raw = row.getAttribute('data-positions');
+	                    if (raw) arr = JSON.parse(raw);
+                } catch (e) { arr = []; }
+                arr.splice(idx, 1);
+                row.setAttribute('data-positions', JSON.stringify(arr));
+                renderPositionPills(row, arr);
+            });
+	            pill.appendChild(rm);
+	            list.appendChild(pill);
+	        });
+	    }
+
+	    function getIssueKeyFromDom() {
+	        var keyEl = document.querySelector('#key-val');
+	        if (keyEl) {
+	            var dk = keyEl.getAttribute('data-issue-key');
+	            if (dk && dk.trim()) return dk.trim();
+	            var txt = (keyEl.textContent || '').trim();
+	            if (txt) return txt;
+	        }
+	        return (window.docuSignIssueKey || '').trim();
+	    }
+		    function getCacheKey() {
+		        var k = getIssueKeyFromDom();
+		        return 'docusign.cache.' + (k ? k : (window.location.pathname || ''));
+		    }
+		    // Client-side caching is disabled by default to avoid stale data across issues in Jira's SPA navigation.
+		    var enableClientCache = (window.docuSignEnableClientCache === true);
+
+	    var initialState = window.docuSignInitialState || {};
+	    var persistedEnvelopeId = initialState.envelopeId || '';
+	    var persistedEnvelopeStatus = initialState.envelopeStatus || '';
+	    var initialSignerState = [];
+	    var signedDownload = $('#docusign-signed-download');
+
+    function showWarningBanner(message) {
+        if (window.docuSignUi && typeof window.docuSignUi.notify === 'function') {
+            window.docuSignUi.notify('warning', message || '', { dedupeKey: 'warn', dedupeMs: 10000 });
+            return;
+        }
+        var statusBox = document.querySelector('#docusign-envelope-status') || document.querySelector('#docusign-result');
+        if (statusBox) {
+            statusBox.style.display = 'block';
+            statusBox.className = 'aui-message aui-message-warning';
+            statusBox.innerHTML = '<p><strong>Warning:</strong> ' + (message || '') + '</p>';
+        }
+    }
+
+		    function loadClientCache() {
+		        if (!enableClientCache) return null;
+		        var currentIssue = getIssueKeyFromDom();
+		        try {
+		            var ck = getCacheKey();
+		            if (!ck || !window.sessionStorage) return null;
+	            var raw = window.sessionStorage.getItem(ck);
+	            if (!raw) return null;
+	            var parsed = JSON.parse(raw);
+	            if (parsed && parsed.issueKey && parsed.issueKey === currentIssue) {
+	                return parsed;
+            }
+            return null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+		    function saveClientCache(data) {
+		        if (!enableClientCache) return;
+		        var currentIssue = getIssueKeyFromDom();
+		        try {
+		            var ck = getCacheKey();
+		            if (!ck || !window.sessionStorage) return;
+	            var payload = data || {};
+	            if (currentIssue) {
+	                payload.issueKey = currentIssue;
+	            }
+	            window.sessionStorage.setItem(ck, JSON.stringify(payload));
+	        } catch (e) {
+	            // ignore storage errors
+	        }
+	    }
+
+		    function clearClientCache() {
+		        if (!enableClientCache) return;
+		        try {
+		            var ck = getCacheKey();
+		            if (!ck || !window.sessionStorage) return;
+		            window.sessionStorage.removeItem(ck);
+	        } catch (e) {
+	            // ignore storage errors
+	        }
+	    }
+
+    var cached = loadClientCache();
+    if (!persistedEnvelopeId && cached && cached.envelopeId) {
+        persistedEnvelopeId = cached.envelopeId;
+        persistedEnvelopeStatus = cached.envelopeStatus || '';
+        initialSignerState = cached.signers || [];
+    }
+    if (initialState.signerUiStateJson) {
+        try {
+            initialSignerState = JSON.parse(initialState.signerUiStateJson);
+        } catch (e) {
+            if (window.console && console.warn) {
+                console.warn('Failed to parse stored signer state', e);
+            }
+        }
+    }
+	    // Always set global issue key from the page, so we don't leak between issues in Jira's SPA navigation.
+	    window.docuSignIssueKey = getIssueKeyFromDom();
+	    // Always reset global envelope id so we don't leak between issues
+	    window.docuSignEnvelopeId = (persistedEnvelopeId || '').trim();
+	    window.docuSignInitialSignerState = initialSignerState;
+	    window.docuSignInitialEnvelopeStatus = persistedEnvelopeStatus;
+	    window.docuSignLoadCache = loadClientCache;
+	    window.docuSignSaveCache = saveClientCache;
+    window.docuSignShowWarning = showWarningBanner;
+    window.docuSignClearCache = clearClientCache;
+
+	    var signersList = null;
+	    var addSignerBtn = null;
+	    var addExternalBtn = null;
+	    var checkStatusBtn = null;
+	    var attachSignedBtn = null;
+	    var editResendBtn = null;
+	    var resultBox = null;
+	    var resultMsg = null;
+	    var sendBtn = null;
+
+	    function ensureUiRefs() {
+	        signersList = $('#docusign-signers-list');
+	        addSignerBtn = $('#docusign-add-signer');
+	        addExternalBtn = $('#docusign-add-external-signer');
+	        checkStatusBtn = $('#docusign-check-status');
+	        attachSignedBtn = $('#docusign-attach-signed');
+	        editResendBtn = $('#docusign-edit-resend');
+	        resultBox = $('#docusign-result');
+	        resultMsg = $('#docusign-result-message');
+	        sendBtn = $('#docusign-send-button');
+	    }
+	    ensureUiRefs();
+
+	    function renderEnvelopeHistory(items) {
+	        var box = document.querySelector('#docusign-envelope-history');
+	        if (!box) return;
+	        var list = Array.isArray(items) ? items : [];
+	        if (!list.length) {
+	            box.style.display = 'block';
+	            box.className = 'aui-message aui-message-info';
+	            box.innerHTML = '<p>No envelopes have been sent for this issue yet.</p>';
+	            return;
+	        }
+	        var html = '<ul style="margin:0; padding-left:18px;">' + list.map(function(h) {
+	            var id = (h.envelopeId || '').trim();
+	            var st = (h.status || '').trim();
+	            var when = '';
+	            try {
+	                var ms = (h.updatedAtMs || h.createdAtMs || 0);
+	                if (ms) when = ' • ' + (new Date(ms)).toLocaleString();
+	            } catch (e) {}
+	            var sender = h.sender ? (' • ' + h.sender) : '';
+	            return '<li><code style="font-size:11px;">' + id + '</code> — <strong>' + st + '</strong>' + sender + when + '</li>';
+	        }).join('') + '</ul>';
+	        box.style.display = 'block';
+	        box.className = 'aui-message aui-message-info';
+	        box.innerHTML = html;
+	    }
+
+	    function loadEnvelopeHistory(issueKey) {
+	        if (!issueKey) return;
+	        var base = (typeof AJS !== 'undefined' && AJS.contextPath ? AJS.contextPath() : '');
+	        var url = base + '/rest/docusign/1.0/send/state/history?issueKey=' + encodeURIComponent(issueKey) + '&limit=15';
+	        return fetch(url, { credentials: 'include' })
+	            .then(function(resp) { return resp.text().then(function(t){ return { status: resp.status, body: t }; }); })
+	            .then(function(res) {
+	                if (res.status < 200 || res.status >= 300) return;
+	                var parsed = null;
+	                try { parsed = JSON.parse(res.body); } catch (e) { parsed = null; }
+	                if (parsed && parsed.history) {
+	                    renderEnvelopeHistory(parsed.history);
+	                }
+	            })
+	            .catch(function(){});
+	    }
+
+    if (window.docuSignEnvelopeId && sendBtn) {
+        sendBtn.disabled = true;
+        sendBtn.classList.add('aui-button-disabled');
+        if (addSignerBtn) addSignerBtn.style.display = 'none';
+        if (addExternalBtn) addExternalBtn.style.display = 'none';
+    }
+
+	    function renderSignedDownload(name, id, downloadUrl) {
+	        if (!signedDownload) return;
+        if (!name && !downloadUrl) {
+            signedDownload.style.display = 'none';
+            signedDownload.innerHTML = '';
+            return;
+        }
+        var ctx = (typeof AJS !== 'undefined' && AJS.contextPath ? AJS.contextPath() : '');
+        var url = '';
+        if (downloadUrl) {
+            url = downloadUrl;
+            if (ctx && downloadUrl.indexOf(ctx) !== 0 && downloadUrl.indexOf('http') !== 0) {
+                url = ctx + downloadUrl;
+            }
+        } else if (id && name) {
+            url = ctx + '/secure/attachment/' + id + '/' + encodeURIComponent(name);
+        }
+        signedDownload.style.display = 'block';
+        signedDownload.className = 'aui-message aui-message-success';
+        if (url) {
+            var label = name || 'Download signed PDF';
+            signedDownload.innerHTML = '<p><strong>Signed PDF:</strong> <a href="' + url + '" target="_blank" rel="noopener">' + label + '</a></p>';
+        } else {
+            signedDownload.innerHTML = '<p><strong>Signed PDF attached to this issue.</strong></p>';
+        }
+    }
+    window.renderSignedDownload = renderSignedDownload;
+
+	    function renderUserSelect(idSuffix) {
+	        var options = '<option value="">Select Jira User...</option>' + projectUsers.map(function(u) {
+	            return '<option value="' + u.userKey + '">' + u.displayName + '</option>';
+	        }).join('');
+	        return '' +
+	            '<div class="docusign-signer-row aui-field-group" data-type="JIRA_USER" draggable="true" style="margin-bottom: 10px; display:flex; align-items:flex-start; gap:8px; flex-wrap:wrap;">' +
+	            '<label class="aui-field-label" style="min-width:110px;">Jira User</label>' +
+	            '<select class="docusign-signer-user aui-select2" data-row="' + idSuffix + '" style="flex:1;min-width:180px;">' +
+	            options +
+	            '</select>' +
+	            '<div class="docusign-pos-group" style="display:none;">' +
+	            '<input type="number" min="1" class="aui-input docusign-page-number" data-row="' + idSuffix + '" />' +
+	            '<input type="number" min="0" class="aui-input docusign-x" data-row="' + idSuffix + '" />' +
+	            '<input type="number" min="0" class="aui-input docusign-y" data-row="' + idSuffix + '" />' +
+	            '</div>' +
+	            '<button type="button" class="aui-button aui-button-subtle docusign-pick-pos" data-row="' + idSuffix + '">Pick on page</button>' +
+	            '<div class="docusign-pos-list" data-row="' + idSuffix + '" style="flex-basis:100%; display:flex; flex-wrap:wrap; gap:6px; margin-top:4px;"></div>' +
+	            '<span class="docusign-status-badge aui-lozenge aui-lozenge-subtle" style="min-width:70px;text-align:center;">--</span>' +
+	            '<button type="button" class="docusign-remove-signer aui-button aui-button-subtle">Remove</button>' +
+	            '</div>';
+	    }
+
+	    function renderExternalRow(idSuffix) {
+	        return '' +
+	            '<div class="docusign-signer-row aui-field-group" data-type="EXTERNAL" draggable="true" style="margin-bottom: 10px; display:flex; align-items:flex-start; gap:8px; flex-wrap:wrap;">' +
+	            '<label class="aui-field-label" style="min-width:110px;">External Signer</label>' +
+	            '<input type="email" class="docusign-external-email aui-input" data-row="' + idSuffix + '" placeholder="email@example.com" style="flex:1;min-width:180px;" />' +
+	            '<div class="docusign-pos-group" style="display:none;">' +
+	            '<input type="number" min="1" class="aui-input docusign-page-number" data-row="' + idSuffix + '" />' +
+	            '<input type="number" min="0" class="aui-input docusign-x" data-row="' + idSuffix + '" />' +
+	            '<input type="number" min="0" class="aui-input docusign-y" data-row="' + idSuffix + '" />' +
+	            '</div>' +
+	            '<button type="button" class="aui-button aui-button-subtle docusign-pick-pos" data-row="' + idSuffix + '">Pick on page</button>' +
+	            '<div class="docusign-pos-list" data-row="' + idSuffix + '" style="flex-basis:100%; display:flex; flex-wrap:wrap; gap:6px; margin-top:4px;"></div>' +
+	            '<span class="docusign-status-badge aui-lozenge aui-lozenge-subtle" style="min-width:70px;text-align:center;">--</span>' +
+	            '<button type="button" class="docusign-remove-signer aui-button aui-button-subtle">Remove</button>' +
+	            '</div>';
+	    }
+
+    function attachRowDrag(row) {
+        if (!row) return;
+        row.addEventListener('dragstart', function(e) {
+            e.dataTransfer.effectAllowed = 'move';
+            row.classList.add('dragging');
+            e.dataTransfer.setData('text/plain', 'drag');
+            window.__docusignDragRow = row;
+        });
+        row.addEventListener('dragend', function() {
+            row.classList.remove('dragging');
+            window.__docusignDragRow = null;
+        });
+    }
+
+		    function addSignerRow() {
+		        ensureUiRefs();
+		        if (!signersList) return;
+		        var rowId = Date.now() + Math.random();
+	        var wrapper = document.createElement('div');
+	        wrapper.innerHTML = renderUserSelect(rowId);
+	        var row = wrapper.firstChild;
+	        signersList.appendChild(row);
+	        // Default the first signer to the issue assignee when available.
+	        try {
+	            var isFirstRow = signersList.querySelectorAll('.docusign-signer-row').length === 1;
+	            var assigneeKey = (window.docuSignAssigneeUserKey || '').trim();
+	            if (isFirstRow && assigneeKey) {
+	                var sel = row.querySelector('.docusign-signer-user');
+	                if (sel && !sel.value) {
+	                    sel.value = assigneeKey;
+	                }
+	            }
+	        } catch (e) {}
+	        attachRowDrag(row);
+	        var removeBtn = row.querySelector('.docusign-remove-signer');
+	        on(removeBtn, 'click', function(e) {
+	            e.preventDefault();
+            row.parentNode.removeChild(row);
+        });
+        var pickBtn = row.querySelector('.docusign-pick-pos');
+        attachPositionPicker(pickBtn, row);
+        renderPositionPills(row, []);
+    }
+
+	    function addExternalSignerRow() {
+	        ensureUiRefs();
+	        if (!signersList) return;
+	        var rowId = Date.now() + Math.random();
+        var wrapper = document.createElement('div');
+        wrapper.innerHTML = renderExternalRow(rowId);
+        var row = wrapper.firstChild;
+        signersList.appendChild(row);
+        attachRowDrag(row);
+        var removeBtn = row.querySelector('.docusign-remove-signer');
+        on(removeBtn, 'click', function(e) {
+            e.preventDefault();
+            row.parentNode.removeChild(row);
+        });
+        var pickBtn = row.querySelector('.docusign-pick-pos');
+        attachPositionPicker(pickBtn, row);
+    }
+
+	    function initSignersUI() {
+	        ensureUiRefs();
+	        var canEditSigners = (typeof window.docuSignEnvelopeId === 'undefined' || !window.docuSignEnvelopeId);
+
+        if (canEditSigners) {
+            if (addSignerBtn) {
+                on(addSignerBtn, 'click', function(e) {
+                    e.preventDefault();
+                    addSignerRow();
+                });
+            }
+            if (addExternalBtn) {
+                on(addExternalBtn, 'click', function(e) {
+                    e.preventDefault();
+                    addExternalSignerRow();
+                });
+            }
+            // seed with one row
+            addSignerRow();
+
+            // Enable drag-and-drop reordering
+            if (signersList) {
+                signersList.addEventListener('dragover', function(e) {
+                    e.preventDefault();
+                    var dragging = window.__docusignDragRow;
+                    var target = e.target.closest('.docusign-signer-row');
+                    if (!dragging || !target || dragging === target) return;
+                    var rect = target.getBoundingClientRect();
+                    var before = (e.clientY - rect.top) < (rect.height / 2);
+                    if (before) {
+                        signersList.insertBefore(dragging, target);
+                    } else {
+                        signersList.insertBefore(dragging, target.nextSibling);
+                    }
+                });
+            }
+        } else {
+            // When envelope already sent, disable editing/reordering; expect rows to be populated via UI state
+            if (signersList) {
+                var rows = Array.prototype.slice.call(signersList.querySelectorAll('.docusign-signer-row'));
+                rows.forEach(function(row) {
+                    row.setAttribute('draggable', 'false');
+                    var select = row.querySelector('select, input');
+                    if (select) select.disabled = true;
+                    var pick = row.querySelector('.docusign-pick-pos');
+                    if (pick) pick.disabled = true;
+                });
+            }
+        }
+    }
+
+	    function showResult(success, message) {
+	        if (window.docuSignUi && typeof window.docuSignUi.notify === 'function') {
+	            window.docuSignUi.notify(success ? 'success' : 'error', message, { dedupeKey: 'action', dedupeMs: 0 });
+	            return;
+	        }
+	        if (!resultBox || !resultMsg) return;
+	        resultBox.style.display = 'block';
+	        resultBox.className = 'aui-message ' + (success ? 'aui-message-success' : 'aui-message-error');
+	        resultMsg.textContent = message;
+	    }
+
+    function disableSendUI() {
+        if (sendBtn) {
+            sendBtn.disabled = true;
+            sendBtn.classList.add('aui-button-disabled');
+        }
+        if (addSignerBtn) addSignerBtn.style.display = 'none';
+        if (addExternalBtn) addExternalBtn.style.display = 'none';
+        var rows = $all('#docusign-signers-list .docusign-signer-row');
+        rows.forEach(function(row) {
+            row.setAttribute('draggable', 'false');
+            var input = row.querySelector('select, input');
+            if (input) input.disabled = true;
+        });
+    }
+
+	    function showWaitingBanner() {
+	        if (window.docuSignUi && typeof window.docuSignUi.notify === 'function') {
+	            window.docuSignUi.notify('info', 'Waiting for signatures', { dedupeKey: 'waiting', dedupeMs: 10000 });
+	            return;
+	        }
+	        if (!resultBox || !resultMsg) return;
+	        resultBox.style.display = 'block';
+	        resultBox.className = 'aui-message aui-message-info';
+	        resultMsg.textContent = 'Waiting for signatures';
+	    }
+
+    function setEditResendVisibility(envelopeStatus) {
+        if (!editResendBtn) return;
+        var envId = window.docuSignEnvelopeId || '';
+        var status = (envelopeStatus || '').toLowerCase();
+        var show = envId && status !== 'completed';
+        editResendBtn.style.display = show ? 'inline-block' : 'none';
+    }
+    window.setEditResendVisibility = setEditResendVisibility;
+
+    function refreshAfterSend() {
+        // Use existing refresh endpoint to pull signer UI state immediately after send
+        if (typeof window.refreshStatus === 'function') {
+            window.refreshStatus();
+        }
+    }
+
+		    function clearEnvelopeState() {
+		        ensureUiRefs();
+		        var issueKey = (window.docuSignIssueKey || '').trim();
+		        if (!issueKey) {
+		            showResult(false, 'Missing issue key. Reload the issue and try again.');
+		            return Promise.resolve();
+		        }
+
+	        if (typeof window.docuSignStopAutoRefresh === 'function') {
+	            window.docuSignStopAutoRefresh(true);
+	        }
+
+		        var base = (typeof AJS !== 'undefined' && AJS.contextPath ? AJS.contextPath() : '');
+		        return fetch(base + '/rest/docusign/1.0/send/state/clear', {
+		            method: 'POST',
+		            headers: { 'Content-Type': 'application/json', 'X-Atlassian-Token': 'no-check' },
+		            credentials: 'include',
+		            body: JSON.stringify({ issueKey: issueKey })
+		        }).then(function(resp) {
+		            if (resp.status >= 200 && resp.status < 300) {
+		                return true;
+		            }
+		            return resp.text().then(function(txt) {
+		                try {
+		                    var body = JSON.parse(txt);
+		                    throw new Error(body && body.error ? body.error : ('Failed to clear state (HTTP ' + resp.status + ')'));
+		                } catch (e) {
+		                    throw new Error('Failed to clear state (HTTP ' + resp.status + ')');
+		                }
+		            });
+		        }).then(function() {
+
+		            if (typeof window.docuSignResetStatusUi === 'function') {
+		                window.docuSignResetStatusUi();
+		            }
+
+	            window.docuSignEnvelopeId = '';
+	            window.docuSignInitialSignerState = [];
+	            window.docuSignInitialEnvelopeStatus = '';
+
+	            if (signedDownload) {
+	                signedDownload.style.display = 'none';
+	                signedDownload.innerHTML = '';
+	            }
+	            if (editResendBtn) editResendBtn.style.display = 'none';
+	            if (sendBtn) {
+	                sendBtn.disabled = false;
+	                sendBtn.classList.remove('aui-button-disabled');
+	            }
+	            if (addSignerBtn) addSignerBtn.style.display = '';
+	            if (addExternalBtn) addExternalBtn.style.display = '';
+	            if (signersList) signersList.innerHTML = '';
+	            addSignerRow();
+	            updateEnvelopeStatus('');
+		            setEditResendVisibility('');
+		            showResult(true, 'Cleared envelope state. You can send again.');
+		        }).catch(function(err) {
+		            showResult(false, (err && err.message) ? err.message : 'Failed to clear envelope state.');
+		        });
+		    }
+
+	    function collectSelectedSigners() {
+	        var rows = $all('#docusign-signers-list .docusign-signer-row');
+	        var signers = [];
+	        rows.forEach(function(row) {
+	            var type = row.getAttribute('data-type');
+	            function mergePositions(payload) {
+	                try {
+	                    var positionsData = row.getAttribute('data-positions');
+	                    if (positionsData) {
+	                        var parsed = JSON.parse(positionsData);
+	                        // Do not globally clamp per-row for multi-document positions; page counts can differ per attachment.
+	                        // The modal already clamps the page picker for the currently selected attachment.
+	                        payload.positions = parsed;
+	                    }
+	                } catch (e) {}
+	            }
+
+	            if (type === 'JIRA_USER') {
+                var sel = row.querySelector('.docusign-signer-user');
+                if (sel && sel.value && sel.value.trim().length > 0) {
+	                    var payload = { type: 'JIRA_USER', value: sel.value.trim() };
+	                    var p = row.querySelector('.docusign-page-number');
+	                    var x = row.querySelector('.docusign-x');
+	                    var y = row.querySelector('.docusign-y');
+	                    if (p && p.value) {
+	                        var max = p.max ? clampInt(p.max, 1, 9999, 9999) : 9999;
+	                        var clamped = clampInt(p.value, 1, max, 1);
+	                        p.value = String(clamped);
+	                        payload.pageNumber = String(clamped);
+	                    }
+	                    if (x && x.value) payload.xPosition = x.value.trim();
+	                    if (y && y.value) payload.yPosition = y.value.trim();
+	                    mergePositions(payload);
+	                    signers.push(payload);
+	                }
+            } else if (type === 'EXTERNAL') {
+                var emailInput = row.querySelector('.docusign-external-email');
+                if (emailInput && emailInput.value && emailInput.value.trim().length > 0) {
+	                    var payloadExt = { type: 'EXTERNAL', value: emailInput.value.trim() };
+	                    var p2 = row.querySelector('.docusign-page-number');
+	                    var x2 = row.querySelector('.docusign-x');
+	                    var y2 = row.querySelector('.docusign-y');
+	                    if (p2 && p2.value) {
+	                        var max2 = p2.max ? clampInt(p2.max, 1, 9999, 9999) : 9999;
+	                        var clamped2 = clampInt(p2.value, 1, max2, 1);
+	                        p2.value = String(clamped2);
+	                        payloadExt.pageNumber = String(clamped2);
+	                    }
+	                    if (x2 && x2.value) payloadExt.xPosition = x2.value.trim();
+	                    if (y2 && y2.value) payloadExt.yPosition = y2.value.trim();
+	                    mergePositions(payloadExt);
+	                    signers.push(payloadExt);
+	                }
+            }
+        });
+        return signers;
+    }
+
+	    function collectAttachmentIds() {
+        return $all('.docusign-attachment-checkbox:checked')
+            .map(function(cb) { return parseInt(cb.value, 10); })
+            .filter(function(v) { return !isNaN(v); });
+    }
+
+	    function postEnvelope() {
+	        ensureUiRefs();
+	        var signers = collectSelectedSigners();
+	        var attachmentIds = collectAttachmentIds();
+	        var issueKey = window.docuSignIssueKey || '';
+
+        if (!issueKey) {
+            showResult(false, 'Issue key is missing.');
+            return;
+        }
+        if (!attachmentIds.length) {
+            showResult(false, 'Select at least one attachment.');
+            return;
+        }
+        if (!signers.length) {
+            showResult(false, 'Add at least one signer.');
+            return;
+        }
+
+        // Payload keeps order from UI; signers carry only type/value
+        var payload = {
+            issueKey: issueKey,
+            attachmentIds: attachmentIds,
+            signers: signers
+        };
+
+	        fetch((typeof AJS !== 'undefined' && AJS.contextPath ? AJS.contextPath() : '') + '/rest/docusign/1.0/send', {
+	            method: 'POST',
+	            headers: { 'Content-Type': 'application/json', 'X-Atlassian-Token': 'no-check' },
+	            credentials: 'include',
+	            body: JSON.stringify(payload)
+	        })
+	        .then(function(resp) {
+	            return resp.text().then(function(txt) {
+	                var body = null;
+	                try { body = JSON.parse(txt); } catch (e) { body = { __raw: txt }; }
+	                return { status: resp.status, body: body };
+	            });
+	        })
+	        .then(function(res) {
+	            if (res.status >= 200 && res.status < 300 && res.body && res.body.envelopeId) {
+	                showResult(true, 'Envelope sent. ID: ' + res.body.envelopeId);
+	                window.docuSignEnvelopeId = res.body.envelopeId;
+                saveClientCache({
+                    envelopeId: res.body.envelopeId,
+                    envelopeStatus: res.body.status || '',
+                    signers: []
+                });
+                try { loadEnvelopeHistory(window.docuSignIssueKey || ''); } catch (e) {}
+                disableSendUI();
+	                showWaitingBanner();
+	                setEditResendVisibility(res.body.status || '');
+	                refreshAfterSend();
+	                if (typeof window.docuSignStartAutoRefresh === 'function') {
+	                    window.docuSignStartAutoRefresh();
+	                }
+	                if (res.body.persistenceWarning) {
+	                    showWarningBanner('Saved envelope without Jira storage: ' + res.body.persistenceWarning);
+	                }
+                } else {
+                    var msg = (window.docuSignUi && window.docuSignUi.friendly)
+                        ? window.docuSignUi.friendly('send', res, 'Failed to send envelope.')
+                        : (res.body && res.body.error ? res.body.error : 'Failed to send envelope.');
+                    showResult(false, msg);
+                }
+            })
+            .catch(function(err) {
+            var m = 'Failed to send envelope.';
+            if (err && err.message) m += ' (' + err.message + ')';
+            showResult(false, m);
+        });
+	    }
+
+	    // Clamp signer row page inputs to their max (if present)
+	    if (signersList) {
+	        signersList.addEventListener('change', function(e) {
+	            var t = e && e.target ? e.target : null;
+	            if (!t || !t.classList || !t.classList.contains('docusign-page-number')) return;
+	            var min = 1;
+	            var max = t.max ? clampInt(t.max, 1, 9999, 1) : 9999;
+	            t.value = String(clampInt(t.value, min, max, 1));
+	        });
+	    }
+
+	    var lastBootIssueKey = null;
+
+		    function resetUiForIssue(issueKey) {
+		        ensureUiRefs();
+		        if (typeof window.docuSignStopAutoRefresh === 'function') {
+		            window.docuSignStopAutoRefresh(true);
+		        }
+	        if (typeof window.docuSignResetStatusUi === 'function') {
+	            window.docuSignResetStatusUi();
+	        }
+	        window.docuSignEnvelopeId = '';
+	        window.docuSignInitialSignerState = [];
+	        window.docuSignInitialEnvelopeStatus = '';
+	        if (signersList) signersList.innerHTML = '';
+	        if (sendBtn) {
+	            sendBtn.disabled = false;
+	            sendBtn.classList.remove('aui-button-disabled');
+	        }
+	        if (addSignerBtn) addSignerBtn.style.display = '';
+	        if (addExternalBtn) addExternalBtn.style.display = '';
+	        if (editResendBtn) editResendBtn.style.display = 'none';
+		        if (signedDownload) {
+		            signedDownload.style.display = 'none';
+		            signedDownload.innerHTML = '';
+		        }
+		    }
+
+		    function loadIssueDocusignState(issueKey) {
+		        if (!issueKey) return Promise.resolve({ envelopeId: '', envelopeStatus: '', signerUiStateJson: '' });
+		        var base = (typeof AJS !== 'undefined' && AJS.contextPath ? AJS.contextPath() : '');
+		        return fetch(base + '/rest/docusign/1.0/send/state?issueKey=' + encodeURIComponent(issueKey), {
+		            credentials: 'include'
+		        }).then(function(resp) {
+		            return resp.text().then(function(txt) {
+		                var body = null;
+		                try { body = JSON.parse(txt); } catch (e) { body = null; }
+		                return { status: resp.status, body: body || {} };
+		            });
+		        }).then(function(res) {
+		            var st = { envelopeId: '', envelopeStatus: '', signerUiStateJson: '' };
+		            if (res.status >= 200 && res.status < 300 && res.body) {
+		                st.envelopeId = res.body.envelopeId || '';
+		                st.envelopeStatus = res.body.envelopeStatus || '';
+		                st.signerUiStateJson = res.body.signerUiState ? JSON.stringify(res.body.signerUiState) : '';
+		            }
+		            // Fallback to per-issue sessionStorage cache when issue properties aren't available yet.
+		            if (!st.envelopeId) {
+		                try {
+		                    var cached = loadClientCache();
+		                    if (cached && cached.envelopeId) {
+		                        st.envelopeId = cached.envelopeId || '';
+		                        st.envelopeStatus = st.envelopeStatus || cached.envelopeStatus || '';
+		                        if (!st.signerUiStateJson && cached.signers && cached.signers.length) {
+		                            st.signerUiStateJson = JSON.stringify(cached.signers);
+		                        }
+		                    }
+		                } catch (e) {}
+		            }
+		            return st;
+		        }).catch(function() {
+		            return { envelopeId: '', envelopeStatus: '', signerUiStateJson: '' };
+		        });
+		    }
+
+		    function bindClickOnce(el, markerAttr, handler) {
+		        if (!el) return;
+		        try {
+		            if (el.getAttribute(markerAttr) === '1') return;
+		            el.setAttribute(markerAttr, '1');
+		        } catch (e) {
+		            // ignore
+		        }
+		        on(el, 'click', handler);
+		    }
+
+		    function bindHandlers() {
+		        ensureUiRefs();
+		        bindClickOnce(sendBtn, 'data-docusign-bound-send', function(e) {
+		            e.preventDefault();
+		            postEnvelope();
+		        });
+		        bindClickOnce(editResendBtn, 'data-docusign-bound-editresend', function(e) {
+		            e.preventDefault();
+		            clearEnvelopeState();
+		        });
+		        bindClickOnce(checkStatusBtn, 'data-docusign-bound-checkstatus', function(e) {
+		            e.preventDefault();
+		            if (typeof window.refreshStatus === 'function') {
+		                window.refreshStatus({ forceRemote: true });
+		            } else if (typeof refreshStatus === 'function') {
+		                refreshStatus({ forceRemote: true });
+		            } else {
+		                showWarningBanner('Unable to check status right now. Please reload the page and try again.');
+		            }
+		        });
+		        bindClickOnce(attachSignedBtn, 'data-docusign-bound-attachsigned', function(e) {
+		            e.preventDefault();
+		            var issueKey = window.docuSignIssueKey || '';
+		            var envId = window.docuSignEnvelopeId || '';
+		            if (!issueKey || !envId) {
+		                showWarningBanner('Missing envelope or issue key.');
+		                return;
+		            }
+		            attachSigned(envId, issueKey);
+		        });
+		    }
+
+		    function bootstrap() {
+		        ensureUiRefs();
+		        bindHandlers();
+		        var issueKey = getIssueKeyFromDom();
+		        if (issueKey && issueKey !== lastBootIssueKey) {
+		            window.docuSignIssueKey = issueKey;
+		            resetUiForIssue(issueKey);
+		            lastBootIssueKey = issueKey;
+	            loadEnvelopeHistory(issueKey);
+	            // Fetch persisted state for this issue (handles Jira SPA navigation where Velocity scripts may not re-run).
+	            loadIssueDocusignState(issueKey).then(function(st) {
+	                window.docuSignEnvelopeId = (st.envelopeId || '').trim();
+	                if (window.docuSignEnvelopeId) {
+	                    if (sendBtn) {
+	                        sendBtn.disabled = true;
+	                        sendBtn.classList.add('aui-button-disabled');
+	                    }
+	                    if (addSignerBtn) addSignerBtn.style.display = 'none';
+	                    if (addExternalBtn) addExternalBtn.style.display = 'none';
+	                    if (typeof window.refreshStatus === 'function') {
+	                        window.refreshStatus({ silent: true, source: 'bootstrap' });
+	                    }
+	                    if (typeof window.docuSignStartAutoRefresh === 'function') {
+	                        window.docuSignStartAutoRefresh();
+	                    }
+	                } else {
+	                    initSignersUI();
+	                }
+		            }).catch(function() {
+		                initSignersUI();
+		            });
+		            return;
+		        }
+	        if (issueKey) {
+	            loadEnvelopeHistory(issueKey);
+	        }
+		        initSignersUI();
+	    }
+
+	    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+	        setTimeout(bootstrap, 50);
+	    } else {
+	        document.addEventListener('DOMContentLoaded', function() { setTimeout(bootstrap, 50); });
+	    }
+	    if (typeof JIRA !== 'undefined' && JIRA.bind) {
+	        JIRA.bind('issue-refreshed', function () {
+	            setTimeout(bootstrap, 50);
+	        });
+	    }
+})();
+</script>
+
+<script type="text/javascript">
+// Status fetch and badge updates (auto refresh + manual refresh)
+(function() {
+    'use strict';
+
+    // Jira issue navigator can inject this panel multiple times; use a generation counter to ensure
+    // only the newest instance continues polling/updating the UI.
+    var __gen = (window.__docusignStatusGen = (window.__docusignStatusGen || 0) + 1);
+    function isStale() { return window.__docusignStatusGen !== __gen; }
+
+    function $(selector) { return document.querySelector(selector); }
+    function $all(selector) { return Array.prototype.slice.call(document.querySelectorAll(selector)); }
+    function parseJsonSafe(resp) {
+        return resp.text().then(function(txt) {
+            try { return JSON.parse(txt); }
+            catch (e) { return { __raw: txt }; }
+        }).then(function(body){ return { status: resp.status, body: body }; });
+    }
+    function ctxPath() {
+        if (typeof window.docuSignCtxPath === 'function') {
+            return window.docuSignCtxPath();
+        }
+        if (typeof AJS !== 'undefined' && AJS.contextPath) {
+            return AJS.contextPath() || '';
+        }
+        var path = window.location.pathname || '';
+        return path.indexOf('/jira') === 0 ? '/jira' : '';
+    }
+    function mapStatusLabel(uiStatus) {
+        var s = (uiStatus || '').toUpperCase();
+        if (s === 'COMPLETED') return { text: 'COMPLETED', cls: 'aui-lozenge-success' };
+        if (s === 'CURRENT') return { text: 'CURRENT', cls: 'aui-lozenge-complete' };
+        if (s === 'PENDING') return { text: 'PENDING', cls: 'aui-lozenge-subtle' };
+        return { text: '--', cls: 'aui-lozenge-subtle' };
+    }
+
+    function renderSignerState(signers) {
+        var container = document.querySelector('#docusign-signers-list');
+        if (!container) return;
+        var html = (signers || []).map(function(signer) {
+            var mapped = mapStatusLabel(signer.uiStatus);
+            var name = signer.name || signer.email || '';
+            var rowCls = 'docusign-signer-row aui-field-group';
+            if (signer.uiStatus && signer.uiStatus.toUpperCase() === 'CURRENT') {
+                rowCls += ' docusign-current-row';
+            } else if (signer.uiStatus && signer.uiStatus.toUpperCase() === 'PENDING') {
+                rowCls += ' docusign-pending-row';
+            }
+            return '' +
+                '<div class="' + rowCls + '" data-type="LOCKED" style="margin-bottom:10px; display:flex; align-items:center; gap:8px;" draggable="false">' +
+                '<label class="aui-field-label" style="min-width:110px;">Signer</label>' +
+                '<span style="flex:1;">' + name + '</span>' +
+                '<span class="docusign-status-badge aui-lozenge ' + mapped.cls + '" style="min-width:70px;text-align:center;">' + mapped.text + '</span>' +
+                '</div>';
+        }).join('');
+        container.innerHTML = html;
+    }
+
+    function updateEnvelopeStatus(label) {
+        var statusBox = $('#docusign-envelope-status');
+        if (!statusBox) return;
+        if (!label) {
+            statusBox.style.display = 'none';
+            statusBox.innerHTML = '';
+            return;
+        }
+        statusBox.style.display = 'block';
+        statusBox.innerHTML = '<p><strong>Envelope Status:</strong> ' + label + '</p>';
+    }
+
+	    var lastKnownSigners = null;
+	    var lastKnownEnvelopeStatus = null;
+	    var envelopeStatusBox = $('#docusign-envelope-status');
+	    var pollTimer = null;
+	    var pollInFlight = false;
+	    var webhookEnabled = (window.docuSignWebhookEnabled === true);
+	    // Polling is used to keep the UI fresh; when webhook is enabled we poll Jira state (cheap) rather than DocuSign (expensive).
+	    var pollBaseIntervalMs = 3000;
+	    var pollBackoffMs = pollBaseIntervalMs;
+	    var pollMaxIntervalMs = 60000;
+	    // Fallback: if webhook is enabled but no events arrive (tunnel down / URL invalid),
+	    // periodically force a remote refresh so status still updates without user clicks.
+	    var remoteRefreshStableThresholdMs = 15000;
+	    var remoteRefreshMinIntervalMs = 30000;
+	    var lastStateSignature = null;
+	    var lastStateChangeAtMs = Date.now();
+	    var lastRemoteRefreshAtMs = 0;
+
+    function isTerminalEnvelopeStatus(status) {
+        var s = (status || '').toLowerCase();
+        return s === 'completed' || s === 'declined' || s === 'voided' || s === 'canceled' || s === 'expired';
+    }
+
+    function clearPollTimer() {
+        if (pollTimer) {
+            clearTimeout(pollTimer);
+            pollTimer = null;
+        }
+    }
+
+    function stopAutoRefresh(reset) {
+        clearPollTimer();
+        if (reset) {
+            pollBackoffMs = pollBaseIntervalMs;
+        }
+    }
+
+    function scheduleNextPoll(delayMs) {
+        clearPollTimer();
+        var ms = (typeof delayMs === 'number' && delayMs > 0) ? delayMs : pollBackoffMs;
+        pollTimer = setTimeout(function() {
+            if (isStale()) return;
+            refreshStatus({ silent: true, source: 'poll' });
+        }, ms);
+    }
+
+    function startAutoRefresh() {
+        if (isStale()) return;
+        if (!window.docuSignEnvelopeId) return;
+        if (document.visibilityState === 'hidden') return;
+        if (isTerminalEnvelopeStatus(lastKnownEnvelopeStatus)) return;
+        scheduleNextPoll(1500);
+    }
+
+    function resetStatusUi() {
+        lastKnownSigners = null;
+        lastKnownEnvelopeStatus = '';
+        stopAutoRefresh(true);
+        try {
+            updateEnvelopeStatus('');
+        } catch (e) {}
+        try {
+            renderSignedDownload(null, null, null);
+        } catch (e2) {}
+    }
+    window.docuSignResetStatusUi = resetStatusUi;
+
+    var persistedSigners = window.docuSignInitialSignerState || [];
+    var persistedStatus = window.docuSignInitialEnvelopeStatus || '';
+    if (persistedSigners && persistedSigners.length) {
+        lastKnownSigners = persistedSigners;
+        lastKnownEnvelopeStatus = persistedStatus || '';
+        renderSignerState(persistedSigners);
+        updateEnvelopeStatus(lastKnownEnvelopeStatus || 'Waiting for signatures');
+        setEditResendVisibility(lastKnownEnvelopeStatus);
+        if (envelopeStatusBox) {
+            envelopeStatusBox.style.display = 'block';
+            envelopeStatusBox.className = 'aui-message aui-message-info';
+        }
+    } else if (window.docuSignEnvelopeId) {
+        updateEnvelopeStatus(persistedStatus || 'Waiting for signatures');
+        setEditResendVisibility(persistedStatus || '');
+        if (envelopeStatusBox) {
+            envelopeStatusBox.style.display = 'block';
+            envelopeStatusBox.className = 'aui-message aui-message-info';
+        }
+    }
+    if ((!lastKnownSigners || !lastKnownSigners.length) && window.docuSignEnvelopeId) {
+        // initial load: refresh once, then polling will keep it updated
+        // (use issueKey refresh when available for persistence)
+        // no-op here; handled by auto-start below
+    }
+
+    function showWarning(message) {
+        var statusDiv = document.querySelector('#docusign-connection-status');
+        if (!statusDiv) return;
+        var existing = statusDiv.querySelector('.docusign-warning');
+        if (existing) {
+            existing.querySelector('p').textContent = message;
+            return;
+        }
+        var div = document.createElement('div');
+        div.className = 'aui-message aui-message-warning docusign-warning';
+        div.style.marginTop = '8px';
+        div.innerHTML = '<p>' + message + '</p>';
+        statusDiv.appendChild(div);
+    }
+
+	    function showError(message) {
+	        // Keep status UI stable; show errors in a consistent banner and dedupe during polling.
+	        if (window.docuSignUi && typeof window.docuSignUi.notify === 'function') {
+	            window.docuSignUi.notify('warning', message || 'An error occurred.', { dedupeKey: 'statusError', dedupeMs: 15000 });
+	            return;
+	        }
+	        if (envelopeStatusBox) {
+	            envelopeStatusBox.style.display = 'block';
+	            envelopeStatusBox.className = 'aui-message aui-message-error';
+	            envelopeStatusBox.innerHTML = '<p><strong>Error:</strong> ' + message + '</p>';
+	        } else {
+	            showWarning(message);
+	        }
+	    }
+
+    function fetchLiveStatus(envelopeId, fallbackMessage, opts) {
+        if (!envelopeId) return;
+        opts = opts || {};
+        var base = ctxPath();
+        if (!opts.silent) {
+            updateEnvelopeStatus('Refreshing...');
+        }
+        return fetch(base + '/rest/docusign/1.0/send/status/live?envelopeId=' + encodeURIComponent(envelopeId), { credentials: 'include' })
+            .then(parseJsonSafe)
+            .then(function(res) {
+                if (isStale()) return;
+                if (res.status >= 200 && res.status < 300 && res.body && res.body.signers) {
+                    lastKnownSigners = res.body.signers;
+                    lastKnownEnvelopeStatus = res.body.envelopeStatus || '';
+                    if (window.docuSignSaveCache) {
+                        window.docuSignSaveCache({
+                            envelopeId: envelopeId,
+                            envelopeStatus: lastKnownEnvelopeStatus,
+                            signers: lastKnownSigners
+                        });
+                    }
+                    renderSignerState(lastKnownSigners);
+                    updateEnvelopeStatus(lastKnownEnvelopeStatus);
+                    renderSignedDownload(res.body.signedAttachmentName, res.body.signedAttachmentId, res.body.signedDownloadUrl);
+                    setEditResendVisibility(lastKnownEnvelopeStatus);
+                    pollBackoffMs = pollBaseIntervalMs;
+                    if (isTerminalEnvelopeStatus(lastKnownEnvelopeStatus)) {
+                        stopAutoRefresh(true);
+                    } else {
+                        scheduleNextPoll(pollBaseIntervalMs);
+                    }
+                    if (envelopeStatusBox) {
+                        envelopeStatusBox.className = 'aui-message aui-message-info';
+                    }
+                } else {
+                    var errMsg = (window.docuSignUi && window.docuSignUi.friendly)
+                        ? window.docuSignUi.friendly('liveStatus', res, 'Live status refresh failed.')
+                        : ((res.body && res.body.error) ? res.body.error : ('Live status failed with HTTP ' + res.status));
+                    if (res.status === 401) {
+                        stopAutoRefresh(true);
+                        showError('DocuSign is not connected. Click "Connect DocuSign" and try again.');
+                        return;
+                    }
+                    if (fallbackMessage) {
+                        errMsg = fallbackMessage + ' (' + errMsg + ')';
+                    }
+                    showError(errMsg);
+                    pollBackoffMs = Math.min(pollMaxIntervalMs, Math.max(pollBaseIntervalMs, pollBackoffMs * 2));
+                    scheduleNextPoll(pollBackoffMs);
+                }
+            })
+            .catch(function(err) {
+                if (isStale()) return;
+                var errMsg = err && err.message ? err.message : 'Unable to fetch live status.';
+                if (fallbackMessage) {
+                    errMsg = fallbackMessage + ' (' + errMsg + ')';
+                }
+                showError(errMsg);
+                pollBackoffMs = Math.min(pollMaxIntervalMs, Math.max(pollBaseIntervalMs, pollBackoffMs * 2));
+                scheduleNextPoll(pollBackoffMs);
+            });
+    }
+
+	    function fetchIssueStateStatus(issueKey, opts) {
+	        if (!issueKey) return;
+	        opts = opts || {};
+	        var base = ctxPath();
+	        if (!opts.silent) {
+	            updateEnvelopeStatus('Refreshing...');
+	        }
+	        return fetch(base + '/rest/docusign/1.0/send/state?issueKey=' + encodeURIComponent(issueKey), { credentials: 'include' })
+	            .then(parseJsonSafe)
+	            .then(function(res) {
+	                if (isStale()) return;
+	                if (res.status >= 200 && res.status < 300 && res.body) {
+	                    var envId = (res.body.envelopeId || '').trim();
+	                    if (envId) {
+	                        window.docuSignEnvelopeId = envId;
+	                    }
+	                    lastKnownEnvelopeStatus = res.body.envelopeStatus || '';
+	                    lastKnownSigners = res.body.signerUiState || [];
+	                    var sig;
+	                    try {
+	                        sig = JSON.stringify({
+	                            envelopeId: (window.docuSignEnvelopeId || '').trim(),
+	                            envelopeStatus: lastKnownEnvelopeStatus || '',
+	                            signerUiState: lastKnownSigners || []
+	                        });
+	                    } catch (e) {
+	                        sig = String(lastKnownEnvelopeStatus || '') + '|' + String((window.docuSignEnvelopeId || '').trim());
+	                    }
+	                    var nowMs = Date.now();
+	                    if (sig !== lastStateSignature) {
+	                        lastStateSignature = sig;
+	                        lastStateChangeAtMs = nowMs;
+	                    }
+	                    if (lastKnownSigners && lastKnownSigners.length) {
+	                        renderSignerState(lastKnownSigners);
+	                    }
+	                    updateEnvelopeStatus(lastKnownEnvelopeStatus || 'Waiting for signatures');
+	                    setEditResendVisibility(lastKnownEnvelopeStatus);
+	                    pollBackoffMs = pollBaseIntervalMs;
+	                    if (isTerminalEnvelopeStatus(lastKnownEnvelopeStatus)) {
+	                        stopAutoRefresh(true);
+	                    } else if (window.docuSignEnvelopeId) {
+	                        var stableForMs = nowMs - (lastStateChangeAtMs || nowMs);
+	                        var sinceRemoteMs = lastRemoteRefreshAtMs ? (nowMs - lastRemoteRefreshAtMs) : 999999999;
+	                        var shouldForceRemote = stableForMs >= remoteRefreshStableThresholdMs &&
+	                            sinceRemoteMs >= remoteRefreshMinIntervalMs;
+	                        if (!shouldForceRemote) {
+	                            scheduleNextPoll(pollBaseIntervalMs);
+	                        }
+	                    } else {
+	                        stopAutoRefresh(true);
+	                    }
+	                    if (envelopeStatusBox) {
+	                        envelopeStatusBox.className = 'aui-message aui-message-info';
+	                    }
+	                    var stableForMs2 = nowMs - (lastStateChangeAtMs || nowMs);
+	                    var sinceRemoteMs2 = lastRemoteRefreshAtMs ? (nowMs - lastRemoteRefreshAtMs) : 999999999;
+	                    var shouldForceRemote2 = window.docuSignEnvelopeId &&
+	                        !isTerminalEnvelopeStatus(lastKnownEnvelopeStatus) &&
+	                        stableForMs2 >= remoteRefreshStableThresholdMs &&
+	                        sinceRemoteMs2 >= remoteRefreshMinIntervalMs;
+	                    return { shouldForceRemote: shouldForceRemote2 };
+	                } else {
+	                    var errMsg = (window.docuSignUi && window.docuSignUi.friendly)
+	                        ? window.docuSignUi.friendly('issueState', res, 'State refresh failed.')
+	                        : ((res.body && res.body.error) ? res.body.error : ('State refresh failed with HTTP ' + res.status));
+	                    showError(errMsg);
+	                    pollBackoffMs = Math.min(pollMaxIntervalMs, Math.max(pollBaseIntervalMs, pollBackoffMs * 2));
+	                    scheduleNextPoll(pollBackoffMs);
+	                    return { shouldForceRemote: false };
+	                }
+	            })
+	            .catch(function(err) {
+	                if (isStale()) return;
+	                var errMsg = err && err.message ? err.message : 'Unable to refresh Jira state.';
+	                showError(errMsg);
+	                pollBackoffMs = Math.min(pollMaxIntervalMs, Math.max(pollBaseIntervalMs, pollBackoffMs * 2));
+	                scheduleNextPoll(pollBackoffMs);
+	                return { shouldForceRemote: false };
+	            });
+	    }
+
+    function attachSigned(envelopeId, issueKey, fallbackMessage) {
+        if (!envelopeId || !issueKey) return;
+        var base = ctxPath();
+        updateEnvelopeStatus('Refreshing...');
+	        return fetch(base + '/rest/docusign/1.0/send/status/attach', {
+	            method: 'POST',
+	            headers: { 'Content-Type': 'application/json', 'X-Atlassian-Token': 'no-check' },
+	            credentials: 'include',
+	            body: JSON.stringify({ envelopeId: envelopeId, issueKey: issueKey })
+	        })
+        .then(parseJsonSafe)
+        .then(function(res) {
+                if (res.status >= 200 && res.status < 300 && res.body) {
+                    lastKnownSigners = res.body.signers || [];
+                    lastKnownEnvelopeStatus = res.body.envelopeStatus || '';
+                    if (window.docuSignSaveCache) {
+                        window.docuSignSaveCache({
+                            envelopeId: envelopeId,
+                            envelopeStatus: lastKnownEnvelopeStatus,
+                            signers: lastKnownSigners
+                        });
+                    }
+                    renderSignerState(lastKnownSigners);
+                    updateEnvelopeStatus(lastKnownEnvelopeStatus);
+                    setEditResendVisibility(lastKnownEnvelopeStatus);
+                    renderSignedDownload(res.body.signedAttachmentName, res.body.signedAttachmentId, res.body.signedDownloadUrl);
+                    if (envelopeStatusBox) {
+                        envelopeStatusBox.className = 'aui-message aui-message-info';
+                    }
+                } else {
+                var errMsg = (res.body && res.body.error) ? res.body.error : ('Attach signed failed with HTTP ' + res.status);
+                if (fallbackMessage) errMsg = fallbackMessage + ' (' + errMsg + ')';
+                showError(errMsg);
+            }
+        })
+        .catch(function(err) {
+            var errMsg = err && err.message ? err.message : 'Unable to fetch/attach signed document.';
+            if (fallbackMessage) errMsg = fallbackMessage + ' (' + errMsg + ')';
+            showError(errMsg);
+        });
+    }
+
+    function refreshStatus(opts) {
+        opts = opts || {};
+        if (isStale()) return;
+        if (pollInFlight) return;
+        var issueKey = window.docuSignIssueKey || '';
+        var envelopeId = window.docuSignEnvelopeId || '';
+        if (!issueKey && !envelopeId) return;
+
+        // If webhook is enabled, default to polling Jira state (no DocuSign token required).
+        // Manual actions can force a remote DocuSign refresh via opts.forceRemote.
+	        if (webhookEnabled && issueKey && !opts.forceRemote) {
+	            pollInFlight = true;
+	            return fetchIssueStateStatus(issueKey, opts).then(function(r) {
+	                pollInFlight = false;
+	                if (isStale()) return r;
+	                if (r && r.shouldForceRemote) {
+	                    lastRemoteRefreshAtMs = Date.now();
+	                    return refreshStatus({ forceRemote: true, silent: true, source: 'fallback-remote' });
+	                }
+	                return r;
+	            }).catch(function(e) {
+	                pollInFlight = false;
+	                throw e;
+	            });
+	        }
+        if (!envelopeId) {
+            // No envelope yet (avoid noisy 400s from /status/refresh when no envelopeId is stored)
+            if (!opts.silent) {
+                showError('No DocuSign envelope found for this issue yet.');
+            }
+            stopAutoRefresh(true);
+            return;
+        }
+
+        // Force a remote refresh (DocuSign API) when requested; otherwise use live status.
+	        var url;
+	        if (opts.forceRemote && issueKey) {
+	            url = ctxPath() + '/rest/docusign/1.0/send/status/refresh?issueKey=' + encodeURIComponent(issueKey);
+	            if (envelopeId) {
+	                url += '&envelopeId=' + encodeURIComponent(envelopeId);
+	            }
+	        } else {
+	            url = ctxPath() + '/rest/docusign/1.0/send/status/live?envelopeId=' + encodeURIComponent(envelopeId);
+	            if (issueKey) {
+	                url += '&issueKey=' + encodeURIComponent(issueKey);
+	            }
+	        }
+
+            if (!opts.silent) {
+                updateEnvelopeStatus('Refreshing...');
+            }
+            pollInFlight = true;
+
+            var p = fetch(url, { credentials: 'include' })
+            .then(parseJsonSafe)
+            .then(function(res) {
+                if (isStale()) return;
+                if (res.status >= 200 && res.status < 300 && res.body && res.body.signers) {
+                    lastKnownSigners = res.body.signers;
+                    lastKnownEnvelopeStatus = res.body.envelopeStatus || '';
+                    renderSignerState(lastKnownSigners);
+                    updateEnvelopeStatus(lastKnownEnvelopeStatus);
+                    setEditResendVisibility(lastKnownEnvelopeStatus);
+                    renderSignedDownload(res.body.signedAttachmentName, res.body.signedAttachmentId, res.body.signedDownloadUrl);
+                    if (envelopeStatusBox) {
+                        envelopeStatusBox.className = 'aui-message aui-message-info';
+                    }
+                    pollBackoffMs = pollBaseIntervalMs;
+                    if (isTerminalEnvelopeStatus(lastKnownEnvelopeStatus)) {
+                        stopAutoRefresh(true);
+                    } else {
+                        scheduleNextPoll(pollBaseIntervalMs);
+                    }
+                } else {
+	                    var errMsg = (window.docuSignUi && window.docuSignUi.friendly)
+	                        ? window.docuSignUi.friendly('statusRefresh', res, 'Status refresh failed.')
+	                        : ((res.body && res.body.error) ? res.body.error : ('Status refresh failed with HTTP ' + res.status));
+                    if (res.status === 401) {
+                        stopAutoRefresh(true);
+                        showError('DocuSign is not connected. Click "Connect DocuSign" and try again.');
+                        return;
+                    }
+                    if (envelopeId && issueKey && !opts.silent) {
+                        return attachSigned(envelopeId, issueKey, errMsg);
+                    } else if (envelopeId) {
+                        return fetchLiveStatus(envelopeId, errMsg, opts);
+                    }
+                    showError(errMsg);
+                    pollBackoffMs = Math.min(pollMaxIntervalMs, Math.max(pollBaseIntervalMs, pollBackoffMs * 2));
+                    scheduleNextPoll(pollBackoffMs);
+                }
+            })
+            .catch(function(err) {
+                if (isStale()) return;
+                var errMsg = err && err.message ? err.message : 'Unable to refresh status.';
+                if (envelopeId && issueKey && !opts.silent) {
+                    return attachSigned(envelopeId, issueKey, errMsg);
+                } else if (envelopeId) {
+                    return fetchLiveStatus(envelopeId, errMsg, opts);
+                }
+                showError(errMsg);
+                pollBackoffMs = Math.min(pollMaxIntervalMs, Math.max(pollBaseIntervalMs, pollBackoffMs * 2));
+                scheduleNextPoll(pollBackoffMs);
+            });
+            return p.then(function(r) {
+                pollInFlight = false;
+                return r;
+            }).catch(function(e) {
+                pollInFlight = false;
+                throw e;
+            });
+        }
+
+    window.refreshStatus = refreshStatus;
+    window.docuSignStartAutoRefresh = startAutoRefresh;
+    window.docuSignStopAutoRefresh = stopAutoRefresh;
+
+    // Auto-start when an envelope is present
+    if (window.docuSignEnvelopeId) {
+        refreshStatus({ silent: true, source: 'init' });
+        startAutoRefresh();
+    }
+
+    document.addEventListener('visibilitychange', function() {
+        if (isStale()) return;
+        if (document.visibilityState === 'hidden') {
+            stopAutoRefresh(false);
+        } else {
+            startAutoRefresh();
+        }
+    });
+    if (typeof JIRA !== 'undefined' && JIRA.bind) {
+        JIRA.bind('issue-refreshed', function() {
+            if (isStale()) return;
+            if (window.docuSignEnvelopeId) {
+                refreshStatus({ silent: true, source: 'issue-refreshed' });
+                startAutoRefresh();
+            }
+        });
+    }
+})();
+</script>

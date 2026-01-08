@@ -1,239 +1,534 @@
 package com.koushik.docusign.docusign;
 
-import com.auth0.jwt.JWT;
-import com.auth0.jwt.algorithms.Algorithm;
+
+
+import com.koushik.docusign.config.DocusignConfig;
+import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import org.apache.http.HttpResponse;
-import org.apache.http.client.HttpClient;
+import com.koushik.docusign.http.DocusignHttpClientFactory;
+import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.ContentType;
 import org.apache.http.entity.StringEntity;
-import org.apache.http.impl.client.HttpClients;
+import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.util.EntityUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
-import java.security.KeyFactory;
-import java.security.interfaces.RSAPrivateKey;
-import java.security.spec.PKCS8EncodedKeySpec;
-import java.time.Instant;
-import java.util.Base64;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
-/**
- * DocuSign service using direct REST API calls (no SDK) for Jira plugin compatibility.
- * This avoids Jakarta/Jersey 3.x dependencies that conflict with Jira's javax.ws.rs stack.
- */
+
+
 public class DocusignService {
 
-    private final String basePath = "https://demo.docusign.net/restapi";
-    private final String authUrl = "https://account-d.docusign.com/oauth/token"; // Demo environment
-    
-    // DocuSign credentials
-    private final String integrationKey = "37a35ef8-eb8d-413a-b34c-b4a95eda8c8e";
-    private final String userId = "f900506f-da7a-4b14-8d6a-283775b775f2";
-    private final String accountId = "7392990d-1ae4-4c3e-a17a-408bba9394af";
-    
-    private final String privateKey = "-----BEGIN RSA PRIVATE KEY-----\n" +
-            "MIIEpAIBAAKCAQEA0pz97TAyULQAH9bqZ0aqFDqJ/gIUqSz6eYrmFeSyUXdUZ5DF\n" +
-            "NZk02gctpSGiBD1JOnXv02tTI9g8ICNh6DBPV/pUGl2GIqCB8L5b4fzrzfMhu+Er\n" +
-            "X4JffS3m4CH0wfHnRCiQGDfHiItZvMixtGK7pz4cGr8sWi2hwHVrk48hNxXJUs9C\n" +
-            "BBfSvGkBXmGGNjmqxmPBOjSCRoXZwSTdq29gDxHutV36/+Hk2XRDbRmTkWkbcTwn\n" +
-            "E3OfFjjjYO1fWhcx5f4EPbMY/+9MkCfdk6fYvDvq3pEu45HFJEJHPluWmdd2aqUu\n" +
-            "lHkFWOBkGvwNowIwEWo08CaBcjfi+kgTLknHDwIDAQABAoIBABmV480gKUSfkVJM\n" +
-            "3/362ieJ8wCODSd+JNGGG6x2M2ltJy5LqoF34rFH5PYmD1IXheFZuXBEHf4BQ1Ce\n" +
-            "K8MytzjXWsc3LFfhiteNsIjUGmtTCXqTAJtiMap53I3G4j57Xh5sFRE0GYPPde/W\n" +
-            "q6vfwK8w/uYK6l7sIzXHrfFnll/kB7EwZOb8YXMm6gpl2tGPPWvlseSdpmQjizM6\n" +
-            "m+y5+vQBwUeIss+pVqMmB0o9RleeF04ZA3YnUP1Snd3UxeHaLAPiryQHkunJiCL7\n" +
-            "n2K60/11qRaXaTKPp99jhnH1CbO9u8orSR4hK3QBWopF2RNL9cElytqce7yCD4n7\n" +
-            "7rZXd7kCgYEA8iNAb3tEeVq1NiWggu/viJx+TTT4OINwG9N/KNWCXGhJod49w2t7\n" +
-            "KUqEV7QqQfRpf0QPu1uQ38bseVwfSJhgS3pyHUzHm1pO6NcIZ2nG8UkgMfMZhvh4\n" +
-            "tFPJLhxzGpwzYgEoFs8w98m2KAZpYXZql0rvLOCXAH5HtBV/n0d8escCgYEA3qu4\n" +
-            "ffSNC3xYzkhN3BSoJ4+tq+U5XKCqVYuU2jRqZVqmPTQusRS1wmhg2aittFTxHFrz\n" +
-            "nhVVpc57sQzfE2iYiMBhYGozX+RpEdtPplHvvIemfA8QD2Sp5I1J+xF+YneOxraX\n" +
-            "4nX2aM8L7Wji4y+xqBPX6RETuptLSslXASYHSXkCgYEApdmhc/qRrzGDN4BUTfs8\n" +
-            "LW1LUWS7tDHLIzQdQAHmVZcVACsyUN0YsfKZbV05KI3ZiNM8l08jjzM4m/OOdfHw\n" +
-            "2yIWcZ06h102+WL4HaUlH/W/eJcTYBBm1NUi0lOoP4zH4RP7uovV9ZMTEp05pwkt\n" +
-            "/0zTQADhTPQx9tZW4OldCNcCgYBrOPlf/ZClhT0mJ/8GCRRn6HHSolCa3+rlwo7s\n" +
-            "++x33czLEAOj1bsoYCay6NysR3LLGqjQ6KkTbHh3ayFIMUeyIiFB0iHm/Q/zP039\n" +
-            "Yts0R4XNm1s6bli466hCM8xOEhA4c9hzfiYnlfvCWI1YpLDBpLyFSGndo8X/vzAc\n" +
-            "J3m+0QKBgQDpB2TsuF+0MQrPFRtG7gRrYA/FbZ27k9m1MjvQju7S7Iy9t7SEZYKm\n" +
-            "jrZ3/Z+nsdUN3G9MyrovZs2cYvpZwvgYyr6YGiG5WEeTgrL+rUtI8bw0VK3hACEe\n" +
-            "M7y7hDhyqomOVNasrwC4/dBMvaFBWHU6pe28YoNUh6DRI/rf/guynw==\n" +
-            "-----END RSA PRIVATE KEY-----";
+    // ====== Configuration (set as ENV or -D JVM props) ======
+    // DOCUSIGN_ACCOUNT_ID      = DocuSign Account ID
+    // Optional:
+    // DOCUSIGN_REST_BASE       = https://demo.docusign.net/restapi
+    // =======================================================
 
-    private final HttpClient httpClient = HttpClients.createDefault();
-    
-    /**
-     * Converts PEM-formatted RSA private key to RSAPrivateKey object
-     */
-    private RSAPrivateKey getPrivateKey() throws Exception {
-        String privateKeyContent = privateKey
-                .replace("-----BEGIN RSA PRIVATE KEY-----", "")
-                .replace("-----END RSA PRIVATE KEY-----", "")
-                .replaceAll("\\s", "");
-        
-        byte[] keyBytes = Base64.getDecoder().decode(privateKeyContent);
-        PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(keyBytes);
-        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
-        return (RSAPrivateKey) keyFactory.generatePrivate(keySpec);
+
+
+    private static final Gson GSON = new Gson();
+    private static final Logger log = LoggerFactory.getLogger(DocusignService.class);
+
+
+
+    private final String accountId;
+
+    private final String restBase;
+
+
+
+    public DocusignService() {
+
+        this(readCfg("DOCUSIGN_REST_BASE", false, "https://demo.docusign.net/restapi"),
+                readCfg("DOCUSIGN_ACCOUNT_ID", true));
+
     }
 
-    /**
-     * Generates JWT token for DocuSign authentication
-     */
-    private String generateJWT() throws Exception {
-        Instant now = Instant.now();
-        Instant expiresAt = now.plusSeconds(3600); // 1 hour expiration
-        
-        Algorithm algorithm = Algorithm.RSA256(null, getPrivateKey());
-        
-        return JWT.create()
-                .withIssuer(integrationKey)
-                .withSubject(userId)
-                .withIssuedAt(java.util.Date.from(now))
-                .withExpiresAt(java.util.Date.from(expiresAt))
-                .withAudience("account-d.docusign.com")
-                .withClaim("scope", "signature impersonation")
-                .sign(algorithm);
+    public DocusignService(String restBase, String accountId) {
+        this.restBase = (restBase != null && !restBase.trim().isEmpty()) ? restBase.trim() : readCfg("DOCUSIGN_REST_BASE", false, "https://demo.docusign.net/restapi");
+        this.accountId = (accountId != null && !accountId.trim().isEmpty()) ? accountId.trim() : readCfg("DOCUSIGN_ACCOUNT_ID", true);
     }
 
-    /**
-     * Gets access token using JWT authentication
-     */
-    private String getAccessToken() throws Exception {
-        String jwt = generateJWT();
-        
-        HttpPost request = new HttpPost(authUrl);
-        request.setHeader("Content-Type", "application/x-www-form-urlencoded");
-        
-        StringEntity params = new StringEntity(
-            "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=" + jwt,
-            StandardCharsets.UTF_8
-        );
-        request.setEntity(params);
-        
-        HttpResponse response = httpClient.execute(request);
-        String responseBody = EntityUtils.toString(response.getEntity());
-        
-        if (response.getStatusLine().getStatusCode() != 200) {
-            throw new RuntimeException("Failed to get access token: " + responseBody);
+
+
+    // -------- Public API --------
+
+
+
+    public String sendEnvelope(String issueKey,
+
+                               List<DocusignDocument> documents,
+
+                               List<DocusignSigner> signers,
+                               String accessToken) throws Exception {
+
+        if (accessToken == null || accessToken.trim().isEmpty()) {
+            throw new IllegalArgumentException("accessToken is required to send envelope");
         }
-        
-        JsonObject jsonResponse = JsonParser.parseString(responseBody).getAsJsonObject();
-        return jsonResponse.get("access_token").getAsString();
+
+
+
+        JsonObject envelope = buildEnvelope(issueKey, documents, signers);
+        org.slf4j.LoggerFactory.getLogger(DocusignService.class)
+                .info("DocuSign envelope payload: {}", envelope.toString());
+
+
+
+        String url = restBase + "/v2.1/accounts/" + accountId + "/envelopes";
+
+        JsonObject resp = httpPostJson(url, accessToken, envelope);
+
+
+
+        if (!resp.has("envelopeId")) {
+
+            throw new RuntimeException("DocuSign response missing envelopeId: " + resp);
+
+        }
+
+        return resp.get("envelopeId").getAsString();
+
     }
 
-    /**
-     * Document model for DocuSign envelope
-     */
-    public static class DocuSignDocument {
-        private String documentBase64;
-        private String name;
-        private String documentId;
-        
-        public DocuSignDocument(String documentBase64, String name, String documentId) {
-            this.documentBase64 = documentBase64;
+    // -------- DTOs you will use from REST resource --------
+
+
+
+    public static class DocusignDocument {
+
+        public String filename;
+
+        public String base64;      // base64 of file bytes (NOT base64url)
+
+        public String extension;   // optional
+
+        public String documentId;  // "1", "2", ...
+
+
+
+        public DocusignDocument(String filename, String base64, String documentId) {
+
+            this.filename = filename;
+
+            this.base64 = base64;
+
+            this.documentId = documentId;
+
+        }
+
+    }
+
+
+
+    public static class DocusignSigner {
+
+        public String name;
+
+        public String email;
+
+        public String recipientId;   // "1", "2", ...
+
+        public String routingOrder;  // "1", "2", ...
+
+        public String pageNumber;    // optional, defaults to 1
+
+        public String xPosition;     // optional, defaults to 400
+
+        public String yPosition;     // optional, defaults to 650
+        public List<TabPosition> positions; // optional multiple positions
+
+
+
+        public DocusignSigner(String name, String email, String recipientId, String routingOrder) {
+
+            this(name, email, recipientId, routingOrder, null, null, null);
+
+        }
+
+        public DocusignSigner(String name, String email, String recipientId, String routingOrder,
+                              String pageNumber, String xPosition, String yPosition) {
+            this(name, email, recipientId, routingOrder, pageNumber, xPosition, yPosition, null);
+        }
+
+        public DocusignSigner(String name, String email, String recipientId, String routingOrder,
+                              String pageNumber, String xPosition, String yPosition, List<TabPosition> positions) {
+
             this.name = name;
+
+            this.email = email;
+
+            this.recipientId = recipientId;
+
+            this.routingOrder = routingOrder;
+
+            this.pageNumber = pageNumber;
+
+            this.xPosition = xPosition;
+
+            this.yPosition = yPosition;
+            this.positions = positions;
+
+        }
+
+    }
+
+    public static class TabPosition {
+        public String pageNumber;
+        public String xPosition;
+        public String yPosition;
+        public String documentId; // optional
+
+        public TabPosition(String pageNumber, String xPosition, String yPosition) {
+            this.pageNumber = pageNumber;
+            this.xPosition = xPosition;
+            this.yPosition = yPosition;
+            this.documentId = null;
+        }
+
+        public TabPosition(String pageNumber, String xPosition, String yPosition, String documentId) {
+            this.pageNumber = pageNumber;
+            this.xPosition = xPosition;
+            this.yPosition = yPosition;
             this.documentId = documentId;
         }
-        
-        public String getDocumentBase64() { return documentBase64; }
-        public String getName() { return name; }
-        public String getDocumentId() { return documentId; }
     }
 
-    /**
-     * Signer model for DocuSign envelope
-     */
-    public static class DocuSignSigner {
-        private String email;
-        private String name;
-        private String recipientId;
-        private String routingOrder;
-        
-        public DocuSignSigner(String email, String name, String recipientId, String routingOrder) {
-            this.email = email;
-            this.name = name;
-            this.recipientId = recipientId;
-            this.routingOrder = routingOrder;
-        }
-        
-        public String getEmail() { return email; }
-        public String getName() { return name; }
-        public String getRecipientId() { return recipientId; }
-        public String getRoutingOrder() { return routingOrder; }
-    }
 
-    /**
-     * Creates and sends a DocuSign envelope
-     */
-    public String sendEnvelope(String issueKey, List<DocuSignDocument> documents, List<DocuSignSigner> signers) throws Exception {
-        String accessToken = getAccessToken();
-        
-        // Build envelope JSON
-        JsonObject envelope = new JsonObject();
-        envelope.addProperty("emailSubject", "Documents to sign | Issue: " + issueKey);
-        envelope.addProperty("status", "sent");
-        
-        // Add documents
-        com.google.gson.JsonArray documentsArray = new com.google.gson.JsonArray();
-        for (DocuSignDocument doc : documents) {
-            JsonObject docJson = new JsonObject();
-            docJson.addProperty("documentBase64", doc.getDocumentBase64());
-            docJson.addProperty("name", doc.getName());
-            docJson.addProperty("documentId", doc.getDocumentId());
-            documentsArray.add(docJson);
-        }
-        envelope.add("documents", documentsArray);
-        
-        // Add recipients
-        JsonObject recipients = new JsonObject();
-        com.google.gson.JsonArray signersArray = new com.google.gson.JsonArray();
-        for (DocuSignSigner signer : signers) {
-            JsonObject signerJson = new JsonObject();
-            signerJson.addProperty("email", signer.getEmail());
-            signerJson.addProperty("name", signer.getName());
-            signerJson.addProperty("recipientId", signer.getRecipientId());
-            signerJson.addProperty("routingOrder", signer.getRoutingOrder());
-            
-            // Add signature tabs - required for DocuSign to know where to place signature fields
-            JsonObject tabs = new JsonObject();
-            com.google.gson.JsonArray signHereTabs = new com.google.gson.JsonArray();
-            
-            // Add a sign here tab for each document
-            for (DocuSignDocument doc : documents) {
-                JsonObject signHere = new JsonObject();
-                signHere.addProperty("documentId", doc.getDocumentId());
-                signHere.addProperty("pageNumber", "1"); // First page
-                signHere.addProperty("xPosition", "100"); // X position in pixels
-                signHere.addProperty("yPosition", "100"); // Y position in pixels
-                signHereTabs.add(signHere);
+
+    // -------- Internal: Envelope JSON --------
+
+
+
+    private JsonObject buildEnvelope(String issueKey,
+                                    List<DocusignDocument> documents,
+                                    List<DocusignSigner> signers) {
+
+        String safeIssueKey = sanitize(issueKey);
+        JsonObject env = new JsonObject();
+
+        env.addProperty("emailSubject", "Please sign documents (Jira: " + safeIssueKey + ")");
+
+        env.addProperty("status", "sent"); // "created" for draft
+
+        // Optional: webhook (DocuSign eventNotification) for near-instant updates.
+        // Use ngrok (or public Jira URL) and set DOCUSIGN_WEBHOOK_URL to something like:
+        //   https://<your-tunnel-domain>/jira/rest/docusign/1.0/send/webhook
+        String webhookBase = readCfg("DOCUSIGN_WEBHOOK_URL", false, null);
+        if (webhookBase != null && !webhookBase.trim().isEmpty()) {
+            String webhookSecret = com.koushik.docusign.config.DocusignConfig.getSecretString("DOCUSIGN_WEBHOOK_SECRET", null);
+            String connectHmacKey = com.koushik.docusign.config.DocusignConfig.getSecretString("DOCUSIGN_CONNECT_HMAC_KEY", null);
+            String base = webhookBase.trim();
+            // Prefer mapping via envelope custom field (jiraIssueKey) so the webhook doesn't need issueKey in the URL.
+            // You can enable issueKey-in-URL for local debugging via DOCUSIGN_WEBHOOK_INCLUDE_ISSUEKEY=true.
+            String url = base;
+            String includeIssueKey = readCfg("DOCUSIGN_WEBHOOK_INCLUDE_ISSUEKEY", false, "false");
+            boolean shouldIncludeIssueKey = "true".equalsIgnoreCase(includeIssueKey != null ? includeIssueKey.trim() : "");
+            if (shouldIncludeIssueKey) {
+                String sep = url.contains("?") ? "&" : "?";
+                url = url + sep + "issueKey=" + encodeUrl(safeIssueKey);
             }
-            
+            // Prefer DocuSign Connect HMAC verification. A shared secret in the URL is a dev-friendly fallback,
+            // but it may be logged by proxies/access logs. You can disable it via DOCUSIGN_WEBHOOK_INCLUDE_SECRET=false.
+            String includeSecret = readCfg("DOCUSIGN_WEBHOOK_INCLUDE_SECRET", false, "true");
+            boolean shouldIncludeSecret = "true".equalsIgnoreCase(includeSecret != null ? includeSecret.trim() : "");
+            if (shouldIncludeSecret && (connectHmacKey == null || connectHmacKey.trim().isEmpty())) {
+                if (webhookSecret != null && !webhookSecret.trim().isEmpty()) {
+                    String sep = url.contains("?") ? "&" : "?";
+                    url = url + sep + "secret=" + encodeUrl(webhookSecret.trim());
+                }
+            }
+
+            JsonObject eventNotification = new JsonObject();
+            eventNotification.addProperty("url", url);
+            eventNotification.addProperty("loggingEnabled", true);
+            eventNotification.addProperty("requireAcknowledgment", true);
+            eventNotification.addProperty("useSoapInterface", false);
+            eventNotification.addProperty("includeDocuments", false);
+            eventNotification.addProperty("includeEnvelopeVoidReason", true);
+
+            com.google.gson.JsonArray envelopeEvents = new com.google.gson.JsonArray();
+            envelopeEvents.add(envelopeEvent("sent"));
+            envelopeEvents.add(envelopeEvent("delivered"));
+            envelopeEvents.add(envelopeEvent("completed"));
+            envelopeEvents.add(envelopeEvent("declined"));
+            envelopeEvents.add(envelopeEvent("voided"));
+            eventNotification.add("envelopeEvents", envelopeEvents);
+
+            com.google.gson.JsonArray recipientEvents = new com.google.gson.JsonArray();
+            recipientEvents.add(recipientEvent("Delivered"));
+            recipientEvents.add(recipientEvent("Completed"));
+            recipientEvents.add(recipientEvent("Declined"));
+            recipientEvents.add(recipientEvent("AuthenticationFailed"));
+            eventNotification.add("recipientEvents", recipientEvents);
+
+            env.add("eventNotification", eventNotification);
+
+            // Also store issue key as envelope custom field (useful if query param is removed).
+            JsonObject envelopeCustomFields = new JsonObject();
+            com.google.gson.JsonArray fields = new com.google.gson.JsonArray();
+            JsonObject field = new JsonObject();
+            field.addProperty("name", "jiraIssueKey");
+            field.addProperty("value", safeIssueKey);
+            fields.add(field);
+            envelopeCustomFields.add("textCustomFields", fields);
+            env.add("customFields", envelopeCustomFields);
+        }
+
+
+
+        // documents
+
+        com.google.gson.JsonArray docs = new com.google.gson.JsonArray();
+
+        for (DocusignDocument d : documents) {
+
+            JsonObject doc = new JsonObject();
+            doc.addProperty("documentBase64", d.base64);
+            doc.addProperty("name", sanitize(d.filename));
+            String ext = resolveFileExtension(d.filename, d.extension);
+            if (ext != null && !ext.isEmpty()) {
+                doc.addProperty("fileExtension", ext);
+            }
+            doc.addProperty("documentId", d.documentId);
+            docs.add(doc);
+
+        }
+
+        env.add("documents", docs);
+
+
+
+        // recipients/signers
+
+        com.google.gson.JsonArray signerArr = new com.google.gson.JsonArray();
+
+        for (DocusignSigner s : signers) {
+
+            JsonObject signer = new JsonObject();
+            signer.addProperty("email", sanitize(s.email));
+            signer.addProperty("name", sanitize(s.name));
+            signer.addProperty("recipientId", s.recipientId);
+            signer.addProperty("routingOrder", s.routingOrder);
+
+
+
+            // Add signature tabs - one signHere tab per document
+
+            JsonObject tabs = new JsonObject();
+
+            com.google.gson.JsonArray signHereTabs = new com.google.gson.JsonArray();
+            int tabIndex = 0;
+
+            // Add signature tabs.
+            // - If tab positions specify a documentId, apply them to that document.
+            // - Otherwise, treat them as belonging to the first document (legacy/preview behavior).
+            // - For any document without explicit tabs, add a single default signature tab.
+            List<TabPosition> tabList = (s.positions != null && !s.positions.isEmpty()) ? s.positions : null;
+
+            for (int di = 0; di < documents.size(); di++) {
+                DocusignDocument d = documents.get(di);
+                if (d == null) continue;
+
+                List<TabPosition> docPositions = null;
+                if (tabList != null) {
+                    for (TabPosition tp : tabList) {
+                        if (tp == null) continue;
+                        String tpDoc = tp.documentId != null ? tp.documentId.trim() : "";
+                        String docId = d.documentId != null ? d.documentId.trim() : "";
+                        boolean matches = (!tpDoc.isEmpty() && !docId.isEmpty() && tpDoc.equals(docId));
+                        boolean legacyFirstDoc = (tpDoc.isEmpty() && di == 0);
+                        if (matches || legacyFirstDoc) {
+                            if (docPositions == null) docPositions = new ArrayList<>();
+                            docPositions.add(tp);
+                        }
+                    }
+                }
+
+                if (docPositions != null && !docPositions.isEmpty()) {
+                    for (TabPosition tp : docPositions) {
+                        JsonObject signHere = new JsonObject();
+                        signHere.addProperty("documentId", d.documentId);
+                        signHere.addProperty("pageNumber", resolveOrDefault(tp.pageNumber, "1"));
+                        signHere.addProperty("xPosition", resolveOrDefault(tp.xPosition, "400"));
+                        signHere.addProperty("yPosition", resolveOrDefault(tp.yPosition, "650"));
+                        signHere.addProperty("recipientId", s.recipientId);
+                        // DocuSign uses tabLabel as a logical identifier; keep it unique so multiple tabs aren't overwritten.
+                        signHere.addProperty("tabLabel", "jiraSignHere_" + s.recipientId + "_" + d.documentId + "_" + (tabIndex++));
+                        signHereTabs.add(signHere);
+                    }
+                } else {
+                    JsonObject signHere = new JsonObject();
+                    signHere.addProperty("documentId", d.documentId);
+                    signHere.addProperty("pageNumber", resolveOrDefault(s.pageNumber, "1"));
+                    signHere.addProperty("xPosition", resolveOrDefault(s.xPosition, "400"));
+                    signHere.addProperty("yPosition", resolveOrDefault(s.yPosition, "650"));
+                    signHere.addProperty("recipientId", s.recipientId);
+                    signHere.addProperty("tabLabel", "jiraSignHere_" + s.recipientId + "_" + d.documentId + "_" + (tabIndex++));
+                    signHereTabs.add(signHere);
+                }
+            }
+
             tabs.add("signHereTabs", signHereTabs);
-            signerJson.add("tabs", tabs);
-            signersArray.add(signerJson);
+
+            signer.add("tabs", tabs);
+
+            signerArr.add(signer);
+
         }
-        recipients.add("signers", signersArray);
-        envelope.add("recipients", recipients);
-        
-        // Send envelope creation request
-        String envelopeUrl = basePath + "/v2.1/accounts/" + accountId + "/envelopes";
-        HttpPost request = new HttpPost(envelopeUrl);
-        request.setHeader("Authorization", "Bearer " + accessToken);
-        request.setHeader("Content-Type", "application/json");
-        
-        StringEntity entity = new StringEntity(envelope.toString(), StandardCharsets.UTF_8);
-        request.setEntity(entity);
-        
-        HttpResponse response = httpClient.execute(request);
-        String responseBody = EntityUtils.toString(response.getEntity());
-        
-        if (response.getStatusLine().getStatusCode() != 201) {
-            throw new RuntimeException("Failed to create envelope: " + responseBody);
-        }
-        
-        JsonObject jsonResponse = JsonParser.parseString(responseBody).getAsJsonObject();
-        return jsonResponse.get("envelopeId").getAsString();
+
+
+
+        JsonObject recipients = new JsonObject();
+
+        recipients.add("signers", signerArr);
+
+        env.add("recipients", recipients);
+
+
+
+        return env;
+
     }
+
+    private JsonObject envelopeEvent(String statusCode) {
+        JsonObject ev = new JsonObject();
+        ev.addProperty("envelopeEventStatusCode", statusCode);
+        ev.addProperty("includeDocuments", "false");
+        return ev;
+    }
+
+    private JsonObject recipientEvent(String statusCode) {
+        JsonObject ev = new JsonObject();
+        ev.addProperty("recipientEventStatusCode", statusCode);
+        ev.addProperty("includeDocuments", "false");
+        return ev;
+    }
+
+    private String encodeUrl(String value) {
+        try {
+            return java.net.URLEncoder.encode(value != null ? value : "", "UTF-8");
+        } catch (Exception e) {
+            return value != null ? value : "";
+        }
+    }
+
+    private String resolveOrDefault(String value, String defVal) {
+        if (value == null || value.trim().isEmpty()) {
+            return defVal;
+        }
+        return value.trim();
+    }
+
+
+
+    // -------- Internal: HTTP helpers --------
+
+
+
+    private JsonObject httpPostJson(String url, String bearerToken, JsonObject jsonBody) throws Exception {
+
+        try (CloseableHttpClient client = DocusignHttpClientFactory.create()) {
+
+            HttpPost post = new HttpPost(url);
+
+            post.setHeader("Content-Type", "application/json");
+
+            if (bearerToken != null) {
+
+                post.setHeader("Authorization", "Bearer " + bearerToken);
+
+            }
+
+            post.setEntity(new StringEntity(GSON.toJson(jsonBody), ContentType.APPLICATION_JSON));
+
+
+
+            try (CloseableHttpResponse resp = client.execute(post)) {
+
+                int code = resp.getStatusLine().getStatusCode();
+
+                String body = EntityUtils.toString(resp.getEntity(), StandardCharsets.UTF_8);
+
+
+
+                if (code < 200 || code >= 300) {
+
+                    log.warn("DocuSign API error response (HTTP {}): {}", code, body);
+
+                    throw new RuntimeException("HTTP " + code + " from DocuSign: " + body);
+
+                }
+
+                return GSON.fromJson(body, JsonObject.class);
+
+            }
+
+        }
+
+    }
+
+
+
+    // -------- Internal: config --------
+
+
+
+    private static String readCfg(String key, boolean required) {
+
+        return readCfg(key, required, null);
+
+    }
+
+
+
+    private static String readCfg(String key, boolean required, String def) {
+        if (required) {
+            String v = DocusignConfig.getString(key, null);
+            if (v == null || v.trim().isEmpty()) {
+                throw new IllegalStateException("Missing config: " + key + " (set as plugin setting, env var, or -D" + key + ")");
+            }
+            return v.trim();
+        }
+        return DocusignConfig.getString(key, def);
+    }
+
+    private String resolveFileExtension(String filename, String extension) {
+        String ext = extension;
+        if (ext == null || ext.trim().isEmpty()) {
+            String name = filename != null ? filename : "";
+            int dot = name.lastIndexOf('.');
+            if (dot >= 0 && dot < name.length() - 1) {
+                ext = name.substring(dot + 1);
+            }
+        }
+        if (ext == null) return null;
+        ext = ext.trim();
+        if (ext.startsWith(".")) ext = ext.substring(1);
+        ext = ext.toLowerCase(Locale.ROOT);
+        // DocuSign expects only the extension token (e.g., "pdf", "docx").
+        ext = ext.replaceAll("[^a-z0-9]", "");
+        if (ext.isEmpty()) return null;
+        if (ext.length() > 10) ext = ext.substring(0, 10);
+        return ext;
+    }
+
+    /**
+     * Sanitize strings before sending to DocuSign:
+     * - remove control chars (except newline/tab handled separately)
+     * - replace \r, \n, \t with a single space
+     * - trim
+     */
+    private String sanitize(String s) {
+        if (s == null) return "";
+        String cleaned = s.replaceAll("[\\p{Cntrl}&&[^\\r\\n\\t]]", "");
+        cleaned = cleaned.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ');
+        return cleaned.trim();
+    }
+
 }

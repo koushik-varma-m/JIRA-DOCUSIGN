@@ -45,16 +45,21 @@ Wait 2-3 minutes for Jira to start, then access at http://localhost:2990/jira
 
 ### DocuSign Credentials
 
-Edit `src/main/java/com/koushik/docusign/docusign/DocusignService.java`:
+Configuration is read from **Jira global plugin settings** (admin page) or **JVM system properties** or **environment variables** (in that order). See `DOCUSIGN_CONFIGURATION.md`.
 
-```java
-private final String integrationKey = "YOUR_INTEGRATION_KEY";
-private final String userId = "YOUR_USER_ID";
-private final String accountId = "YOUR_ACCOUNT_ID";
-private final String privateKey = "YOUR_RSA_PRIVATE_KEY";
-```
+Admin settings page:
+- `http://localhost:2990/jira/plugins/servlet/docusign/admin` (also appears under Jira Admin → System menu → DocuSign)
 
-**Note**: For production, move credentials to configuration properties or environment variables.
+Optional: enable near-instant status updates using a webhook:
+- `DOCUSIGN_WEBHOOK_URL` (example: ngrok `https://<domain>/jira/rest/docusign/1.0/send/webhook`)
+- `DOCUSIGN_CONNECT_HMAC_KEY` (recommended; verifies DocuSign Connect signatures)
+- `DOCUSIGN_WEBHOOK_ACTOR` (defaults to `admin`)
+- `DOCUSIGN_WEBHOOK_REQUIRE_AUTH` (`true` recommended once configured)
+- `DOCUSIGN_WEBHOOK_SECRET` (fallback shared secret; can be included in URL for dev)
+
+Secrets at rest:
+- Tokens and secrets stored in Jira plugin settings are encrypted. In dev, a master key file is created under `jira.home` at `docusign-plugin/master.key`.
+- For Data Center, ensure a consistent key across nodes (use `jira.shared.home` or set `DOCUSIGN_MASTER_KEY_B64`).
 
 ### DocuSign Environment
 
@@ -197,4 +202,3 @@ See the following files for detailed information:
 - `ANALYSIS_FROM_WORKING_STATE.md`: Analysis of working state
 - `FIXES_APPLIED.md`: Summary of fixes applied
 - `START_JIRA.md`: Instructions for starting Jira
-

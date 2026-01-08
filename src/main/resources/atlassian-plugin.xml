@@ -5,6 +5,7 @@
         <vendor name="${project.organization.name}" url="${project.organization.url}" />
         <param name="plugin-icon">images/pluginIcon.png</param>
         <param name="plugin-logo">images/pluginLogo.png</param>
+        <param name="atlassian-data-center-compatible">true</param>
     </plugin-info>
 
     <!-- add our i18n resource -->
@@ -15,16 +16,45 @@
         <dependency>com.atlassian.auiplugin:ajs</dependency>
         
         <resource type="download" name="jira-docusign-plugin.css" location="/css/jira-docusign-plugin.css"/>
+        <resource type="download" name="vendor/pdfjs/pdf.min.js" location="/js/vendor/pdfjs/pdf.min.js"/>
+        <resource type="download" name="vendor/pdfjs/pdf.worker.min.js" location="/js/vendor/pdfjs/pdf.worker.min.js"/>
         <resource type="download" name="jira-docusign-plugin.js" location="/js/jira-docusign-plugin.js"/>
         <resource type="download" name="images/" location="/images"/>
 
         <context>jira-docusign-plugin</context>
+        <context>jira.view.issue</context>
     </web-resource>
 
+    <!-- Active Objects schema for persistence -->
+    <ao key="docusign-ao" name="DocuSign AO">
+        <description key="docusign.ao.description">DocuSign persistence tables</description>
+        <entity>com.koushik.docusign.ao.AoDocusignEnvelope</entity>
+        <entity>com.koushik.docusign.ao.AoDocusignDocument</entity>
+        <entity>com.koushik.docusign.ao.AoDocusignSigner</entity>
+        <entity>com.koushik.docusign.ao.AoDocusignTab</entity>
+        <entity>com.koushik.docusign.ao.AoDocusignEvent</entity>
+    </ao>
+
     <web-panel key="docusign-panel" location="atl.jira.view.issue.right.context" weight="100">
+        <label key="docusign.panel.label"/>
         <resource name="view" type="velocity" location="/templates/docusign-panel.vm"/>
         <context-provider class="com.koushik.docusign.DocusignContextProvider"/>
+        <dependency>com.koushik.docusign:jira-docusign-plugin-resources</dependency>
     </web-panel>
+
+    <!-- Admin navigation: DocuSign settings -->
+    <web-section key="docusign-admin-section"
+                 location="admin_system_menu"
+                 weight="30">
+        <label key="docusign.admin.section.label"/>
+    </web-section>
+    <web-item key="docusign-admin-settings"
+              section="admin_system_menu/docusign-admin-section"
+              weight="1">
+        <label key="docusign.admin.item.label"/>
+        <tooltip key="docusign.admin.item.tooltip"/>
+        <link linkId="docusign-admin-settings">/plugins/servlet/docusign/admin</link>
+    </web-item>
 
     <rest key="docusign-rest" path="/docusign" version="1.0">
         <description>DocuSign REST API</description>
@@ -34,5 +64,22 @@
                 type="com.koushik.docusign.rest.DocusignRestResource"/>
     </rest>
 
+    <!-- DocuSign OAuth Connect Servlet - Initiates OAuth login -->
+    <servlet key="docusign-connect-servlet" 
+             class="com.koushik.docusign.servlet.DocusignConnectServlet">
+        <url-pattern>/docusign/connect</url-pattern>
+    </servlet>
+
+    <!-- DocuSign OAuth Callback Servlet - Handles OAuth callback -->
+    <servlet key="docusign-callback-servlet" 
+             class="com.koushik.docusign.servlet.DocusignCallbackServlet">
+        <url-pattern>/docusign/callback</url-pattern>
+    </servlet>
+
+    <!-- Admin configuration page -->
+    <servlet key="docusign-admin-servlet"
+             class="com.koushik.docusign.servlet.DocusignAdminServlet">
+        <url-pattern>/docusign/admin</url-pattern>
+    </servlet>
     
 </atlassian-plugin>
