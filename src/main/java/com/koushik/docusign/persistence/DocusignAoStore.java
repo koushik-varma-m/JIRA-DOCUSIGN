@@ -40,6 +40,16 @@ public final class DocusignAoStore {
         }
     }
 
+    public static final class DocumentMeta {
+        public final String documentId;
+        public final String filename;
+
+        public DocumentMeta(String documentId, String filename) {
+            this.documentId = documentId;
+            this.filename = filename;
+        }
+    }
+
     private static ActiveObjects ao() {
         return DocusignAoProvider.get();
     }
@@ -512,6 +522,39 @@ public final class DocusignAoStore {
             arr.add(obj);
         }
         return arr;
+    }
+
+    /**
+     * Return document metadata for a specific envelope (documentId + filename), when available.
+     */
+    public static List<DocumentMeta> loadEnvelopeDocuments(String issueKey, String envelopeId) {
+        ActiveObjects ao = ao();
+        if (ao == null) return null;
+        if (issueKey == null || issueKey.trim().isEmpty()) return null;
+        if (envelopeId == null || envelopeId.trim().isEmpty()) return null;
+        String key = issueKey.trim();
+        String envId = envelopeId.trim();
+
+        AoDocusignEnvelope[] envs = ao.find(
+                AoDocusignEnvelope.class,
+                Query.select().where("ISSUE_KEY = ? AND ENVELOPE_ID = ?", key, envId).order("ID DESC").limit(1)
+        );
+        if (envs == null || envs.length == 0) return new ArrayList<>();
+        AoDocusignEnvelope env = envs[0];
+
+        AoDocusignDocument[] docs = ao.find(
+                AoDocusignDocument.class,
+                Query.select().where("ENVELOPE_ID = ?", env.getID()).order("DOCUMENT_ID ASC")
+        );
+        List<DocumentMeta> out = new ArrayList<>();
+        if (docs == null) return out;
+        for (AoDocusignDocument d : docs) {
+            if (d == null) continue;
+            String did = safe(d.getDocumentId());
+            if (did == null || did.trim().isEmpty()) continue;
+            out.add(new DocumentMeta(did.trim(), safe(d.getFilename())));
+        }
+        return out;
     }
 
     private static void createTab(ActiveObjects ao,

@@ -1291,6 +1291,38 @@
     }
     window.renderSignedDownload = renderSignedDownload;
 
+	    function renderSignedDownloads(items, combinedDownloadUrl) {
+	        if (!signedDownload) return;
+	        var list = Array.isArray(items) ? items : [];
+	        if (!list.length && !combinedDownloadUrl) {
+	            signedDownload.style.display = 'none';
+	            signedDownload.innerHTML = '';
+	            return;
+	        }
+	        var ctx = (typeof AJS !== 'undefined' && AJS.contextPath ? AJS.contextPath() : '');
+	        var html = '<div><strong>Signed documents:</strong></div><ul style="margin:6px 0 0 18px;">';
+	        list.forEach(function(it) {
+	            if (!it) return;
+	            var id = it.id || it.attachmentId || it.attachmentID;
+	            var name = it.name || it.filename || '';
+	            if (!id || !name) return;
+	            var url = ctx + '/secure/attachment/' + id + '/' + encodeURIComponent(name);
+	            html += '<li><a href="' + url + '" target="_blank" rel="noopener">' + name + '</a></li>';
+	        });
+	        html += '</ul>';
+	        if (combinedDownloadUrl) {
+	            var url2 = combinedDownloadUrl;
+	            if (ctx && combinedDownloadUrl.indexOf(ctx) !== 0 && combinedDownloadUrl.indexOf('http') !== 0) {
+	                url2 = ctx + combinedDownloadUrl;
+	            }
+	            html += '<div style="margin-top:6px;"><a href="' + url2 + '" target="_blank" rel="noopener">Download combined PDF</a></div>';
+	        }
+	        signedDownload.style.display = 'block';
+	        signedDownload.className = 'aui-message aui-message-success';
+	        signedDownload.innerHTML = html;
+	    }
+	    window.renderSignedDownloads = renderSignedDownloads;
+
 	    function renderUserSelect(idSuffix) {
 	        var options = '<option value="">Select Jira User...</option>' + projectUsers.map(function(u) {
 	            return '<option value="' + u.userKey + '">' + u.displayName + '</option>';
@@ -2080,7 +2112,11 @@
                     }
                     renderSignerState(lastKnownSigners);
                     updateEnvelopeStatus(lastKnownEnvelopeStatus);
-                    renderSignedDownload(res.body.signedAttachmentName, res.body.signedAttachmentId, res.body.signedDownloadUrl);
+                    if (res.body.signedAttachments && Array.isArray(res.body.signedAttachments) && res.body.signedAttachments.length) {
+                        renderSignedDownloads(res.body.signedAttachments, res.body.signedDownloadUrl);
+                    } else {
+                        renderSignedDownload(res.body.signedAttachmentName, res.body.signedAttachmentId, res.body.signedDownloadUrl);
+                    }
                     setEditResendVisibility(lastKnownEnvelopeStatus);
                     pollBackoffMs = pollBaseIntervalMs;
                     if (isTerminalEnvelopeStatus(lastKnownEnvelopeStatus)) {
@@ -2210,7 +2246,7 @@
 	            method: 'POST',
 	            headers: { 'Content-Type': 'application/json', 'X-Atlassian-Token': 'no-check' },
 	            credentials: 'include',
-	            body: JSON.stringify({ envelopeId: envelopeId, issueKey: issueKey })
+	            body: JSON.stringify({ envelopeId: envelopeId, issueKey: issueKey, mode: 'individual' })
 	        })
         .then(parseJsonSafe)
         .then(function(res) {
@@ -2227,7 +2263,11 @@
                     renderSignerState(lastKnownSigners);
                     updateEnvelopeStatus(lastKnownEnvelopeStatus);
                     setEditResendVisibility(lastKnownEnvelopeStatus);
-                    renderSignedDownload(res.body.signedAttachmentName, res.body.signedAttachmentId, res.body.signedDownloadUrl);
+                    if (res.body.signedAttachments && Array.isArray(res.body.signedAttachments) && res.body.signedAttachments.length) {
+                        renderSignedDownloads(res.body.signedAttachments, res.body.signedDownloadUrl);
+                    } else {
+                        renderSignedDownload(res.body.signedAttachmentName, res.body.signedAttachmentId, res.body.signedDownloadUrl);
+                    }
                     if (envelopeStatusBox) {
                         envelopeStatusBox.className = 'aui-message aui-message-info';
                     }
@@ -2307,7 +2347,11 @@
                     renderSignerState(lastKnownSigners);
                     updateEnvelopeStatus(lastKnownEnvelopeStatus);
                     setEditResendVisibility(lastKnownEnvelopeStatus);
-                    renderSignedDownload(res.body.signedAttachmentName, res.body.signedAttachmentId, res.body.signedDownloadUrl);
+                    if (res.body.signedAttachments && Array.isArray(res.body.signedAttachments) && res.body.signedAttachments.length) {
+                        renderSignedDownloads(res.body.signedAttachments, res.body.signedDownloadUrl);
+                    } else {
+                        renderSignedDownload(res.body.signedAttachmentName, res.body.signedAttachmentId, res.body.signedDownloadUrl);
+                    }
                     if (envelopeStatusBox) {
                         envelopeStatusBox.className = 'aui-message aui-message-info';
                     }

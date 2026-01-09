@@ -67,6 +67,7 @@ import java.util.Base64;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -1235,6 +1236,10 @@ public class DocusignRestResource {
                 JsonObject resp = new JsonObject();
                 resp.addProperty("envelopeStatus", envelopeStatus);
                 resp.addProperty("signedAttached", attached);
+                try {
+                    resp.add("signedAttachments", collectSignedAttachments(issue));
+                } catch (Exception ignore) {
+                }
                 if (signedName != null) {
                     resp.addProperty("signedAttachmentName", signedName);
                 }
@@ -1356,6 +1361,10 @@ public class DocusignRestResource {
             resp.addProperty("envelopeStatus", envelopeStatus);
             resp.add("signers", signerArr);
             resp.addProperty("envelopeId", resolvedEnvelopeId);
+            try {
+                resp.add("signedAttachments", collectSignedAttachments(issue));
+            } catch (Exception ignore) {
+            }
             if (signedName != null) {
                 resp.addProperty("signedAttachmentName", signedName);
             }
@@ -1420,19 +1429,105 @@ public class DocusignRestResource {
             boolean attached = false;
             if ("completed".equalsIgnoreCase(envelopeStatus)) {
                 try {
-                    byte[] pdf = new DocusignDocumentFetchService(resolvedRestBase, resolvedAccountId).fetchSignedPdf(envelopeId, accessToken);
-                    documentDownloadService.attachSignedPdfIfMissing(issue, pdf, issue.getKey() + ".pdf");
-                    Attachment signed = findSignedAttachment(issue);
-                    if (signed != null) {
-                        signedName = signed.getFilename();
-                        signedId = signed.getId();
+                    String mode = req.getMode();
+                    boolean combined = mode != null && "combined".equalsIgnoreCase(mode.trim());
+
+                    DocusignDocumentFetchService fetch = new DocusignDocumentFetchService(resolvedRestBase, resolvedAccountId);
+                    JsonArray attachedArr = new JsonArray();
+
+                    if (combined) {
+                        byte[] pdf = fetch.fetchSignedPdf(envelopeId, accessToken);
+                        String fn = defaultSignedFileName(issue, envelopeId);
+                        boolean ok = documentDownloadService.attachPdfIfMissing(issue, pdf, fn);
+                        Attachment a = ok ? findAttachmentByFilename(issue, fn) : null;
+                        if (a != null) {
+                            attached = true;
+                            JsonObject obj = new JsonObject();
+                            obj.addProperty("id", a.getId());
+                            obj.addProperty("name", a.getFilename());
+                            attachedArr.add(obj);
+                        }
+                    } else {
+                        // Default: attach one PDF per envelope document (not combined).
+                        List<DocusignAoStore.DocumentMeta> docs = null;
+                        try {
+                            docs = DocusignAoStore.loadEnvelopeDocuments(issue.getKey(), envelopeId);
+                        } catch (Exception ignore) {
+                            docs = null;
+                        }
+                        if (docs == null || docs.isEmpty()) {
+                            docs = new ArrayList<>();
+                            try {
+                                for (DocusignDocumentFetchService.EnvelopeDocument d : fetch.listEnvelopeDocuments(envelopeId, accessToken)) {
+                                    if (d == null) continue;
+                                    docs.add(new DocusignAoStore.DocumentMeta(d.documentId, d.name));
+                                }
+                            } catch (Exception ignore) {
+                                docs = new ArrayList<>();
+                            }
+                        }
+
+                        List<DocusignAoStore.DocumentMeta> contentDocs = new ArrayList<>();
+                        for (DocusignAoStore.DocumentMeta d : docs) {
+                            if (d == null || d.documentId == null) continue;
+                            String id = d.documentId.trim();
+                            if (id.isEmpty()) continue;
+                            String lid = id.toLowerCase(Locale.ROOT);
+                            if ("combined".equals(lid) || "certificate".equals(lid) || "summary".equals(lid)) continue;
+                            contentDocs.add(d);
+                        }
+
+                        if (contentDocs.isEmpty()) {
+                            // Last resort: attach the combined doc if DocuSign doesn't expose documentIds.
+                            byte[] pdf = fetch.fetchSignedPdf(envelopeId, accessToken);
+                            String fn = defaultSignedFileName(issue, envelopeId);
+                            boolean ok = documentDownloadService.attachPdfIfMissing(issue, pdf, fn);
+                            Attachment a = ok ? findAttachmentByFilename(issue, fn) : null;
+                            if (a != null) {
+                                attached = true;
+                                JsonObject obj = new JsonObject();
+                                obj.addProperty("id", a.getId());
+                                obj.addProperty("name", a.getFilename());
+                                attachedArr.add(obj);
+                            }
+                        } else {
+                            for (DocusignAoStore.DocumentMeta d : contentDocs) {
+                                byte[] pdf = fetch.fetchDocumentPdf(envelopeId, d.documentId, accessToken);
+                                String fn = signedFileNameForDoc(issue, envelopeId, d.documentId, d.filename);
+                                boolean ok = documentDownloadService.attachPdfIfMissing(issue, pdf, fn);
+                                Attachment a = ok ? findAttachmentByFilename(issue, fn) : null;
+                                if (a != null) {
+                                    attached = true;
+                                    JsonObject obj = new JsonObject();
+                                    obj.addProperty("id", a.getId());
+                                    obj.addProperty("name", a.getFilename());
+                                    attachedArr.add(obj);
+                                }
+                            }
+                        }
                     }
-                    try {
-                        ApplicationUser userCtx = resolveUser();
-                        setIssuePropertyJson(userCtx, issue, "docusign.signedAttached", wrapValueJson(Boolean.TRUE));
-                    } catch (Exception ignore) {
+
+                    if (attachedArr.size() > 0) {
+                        try {
+                            ApplicationUser userCtx = resolveUser();
+                            setIssuePropertyJson(userCtx, issue, "docusign.signedAttachments", attachedArr.toString());
+                            setIssuePropertyJson(userCtx, issue, "docusign.signedAttached", wrapValueJson(Boolean.TRUE));
+                        } catch (Exception ignore) {
+                        }
                     }
-                    attached = true;
+
+                    // Compatibility: surface the first signed attachment.
+                    if (attachedArr.size() > 0) {
+                        JsonObject first = attachedArr.get(0).getAsJsonObject();
+                        if (first.has("name")) signedName = first.get("name").getAsString();
+                        if (first.has("id")) signedId = first.get("id").getAsLong();
+                    } else {
+                        Attachment signed = findSignedAttachment(issue);
+                        if (signed != null) {
+                            signedName = signed.getFilename();
+                            signedId = signed.getId();
+                        }
+                    }
                 } catch (Exception attachEx) {
                     log.warn("Failed to attach signed PDF for {} envelope {}: {}", issue.getKey(), envelopeId, attachEx.getMessage());
                 }
@@ -1469,6 +1564,10 @@ public class DocusignRestResource {
             resp.add("signers", signerArr);
             resp.addProperty("envelopeId", envelopeId);
             resp.addProperty("signedAttached", attached);
+            try {
+                resp.add("signedAttachments", collectSignedAttachments(issue));
+            } catch (Exception ignore) {
+            }
             if (signedName != null) {
                 resp.addProperty("signedAttachmentName", signedName);
             }
@@ -1497,7 +1596,9 @@ public class DocusignRestResource {
     @GET
     @Path("/signed/download")
     @Produces({MediaType.APPLICATION_OCTET_STREAM, MediaType.APPLICATION_JSON})
-    public Response downloadSigned(@QueryParam("envelopeId") String envelopeId, @QueryParam("issueKey") String issueKey) {
+    public Response downloadSigned(@QueryParam("envelopeId") String envelopeId,
+                                   @QueryParam("issueKey") String issueKey,
+                                   @QueryParam("documentId") String documentId) {
         try {
             String resolvedId = sanitizeEnvelopeId(envelopeId);
             Issue issue = null;
@@ -1532,8 +1633,10 @@ public class DocusignRestResource {
 
             String resolvedRestBase = resolveRestBaseForUser(user);
             String resolvedAccountId = requireAccountIdForUser(user);
-            byte[] pdf = new DocusignDocumentFetchService(resolvedRestBase, resolvedAccountId).fetchSignedPdf(resolvedId, accessToken);
-            String filename = defaultSignedFileName(issue, resolvedId);
+            String docId = (documentId != null && !documentId.trim().isEmpty()) ? documentId.trim() : "combined";
+            DocusignDocumentFetchService fetch = new DocusignDocumentFetchService(resolvedRestBase, resolvedAccountId);
+            byte[] pdf = "combined".equalsIgnoreCase(docId) ? fetch.fetchSignedPdf(resolvedId, accessToken) : fetch.fetchDocumentPdf(resolvedId, docId, accessToken);
+            String filename = "combined".equalsIgnoreCase(docId) ? defaultSignedFileName(issue, resolvedId) : signedFileNameForDoc(issue, resolvedId, docId, "document-" + docId);
             return Response.ok(pdf)
                     .type("application/pdf")
                     .header("Content-Disposition", "inline; filename=\"" + filename + "\"")
@@ -1551,11 +1654,14 @@ public class DocusignRestResource {
     public static class AttachRequest {
         private String issueKey;
         private String envelopeId;
+        private String mode; // "individual" (default) | "combined"
 
         public String getIssueKey() { return issueKey; }
         public void setIssueKey(String issueKey) { this.issueKey = issueKey; }
         public String getEnvelopeId() { return envelopeId; }
         public void setEnvelopeId(String envelopeId) { this.envelopeId = envelopeId; }
+        public String getMode() { return mode; }
+        public void setMode(String mode) { this.mode = mode; }
     }
 
     private List<DocusignSigner> convertMixedSigners(List<SignerInput> inputs, Map<Long, String> attachmentIdToDocumentId) {
@@ -2059,6 +2165,22 @@ public class DocusignRestResource {
         return obj.toString();
     }
 
+    private Attachment findAttachmentByFilename(Issue issue, String filename) {
+        try {
+            if (issue == null || filename == null || filename.trim().isEmpty()) return null;
+            String target = filename.trim();
+            AttachmentManager am = ComponentAccessor.getAttachmentManager();
+            List<Attachment> atts = am.getAttachments(issue);
+            if (atts == null) return null;
+            for (Attachment a : atts) {
+                if (a == null || a.getFilename() == null) continue;
+                if (a.getFilename().equalsIgnoreCase(target)) return a;
+            }
+        } catch (Exception ignore) {
+        }
+        return null;
+    }
+
     private Attachment findSignedAttachment(Issue issue) {
         try {
             if (issue == null) return null;
@@ -2076,6 +2198,58 @@ public class DocusignRestResource {
             log.debug("Failed to locate signed attachment for issue {}: {}", issue != null ? issue.getKey() : "null", e.getMessage());
         }
         return null;
+    }
+
+    private JsonArray collectSignedAttachments(Issue issue) {
+        JsonArray arr = new JsonArray();
+        try {
+            if (issue == null) return arr;
+            AttachmentManager am = ComponentAccessor.getAttachmentManager();
+            List<Attachment> atts = am.getAttachments(issue);
+            if (atts == null) return arr;
+            for (Attachment a : atts) {
+                if (a == null || a.getFilename() == null) continue;
+                String name = a.getFilename();
+                if (name == null || !name.startsWith("Signed_")) continue;
+                JsonObject obj = new JsonObject();
+                obj.addProperty("id", a.getId());
+                obj.addProperty("name", name);
+                arr.add(obj);
+            }
+        } catch (Exception ignore) {
+        }
+        return arr;
+    }
+
+    private String signedFileNameForDoc(Issue issue, String envelopeId, String documentId, String docName) {
+        String issueKey = issue != null ? issue.getKey() : null;
+        String env = envelopeId != null ? envelopeId.trim() : "";
+        String envShort = env.length() >= 8 ? env.substring(0, 8) : env;
+        String docId = (documentId != null && !documentId.trim().isEmpty()) ? documentId.trim() : "doc";
+
+        String base = (docName != null && !docName.trim().isEmpty()) ? docName.trim() : ("document-" + docId);
+        int dot = base.lastIndexOf('.');
+        if (dot > 0) base = base.substring(0, dot);
+        base = sanitize(base);
+        if (base == null || base.isEmpty()) base = "document-" + docId;
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("Signed_");
+        if (issueKey != null && !issueKey.trim().isEmpty()) {
+            sb.append(sanitize(issueKey.trim())).append("_");
+        }
+        if (envShort != null && !envShort.isEmpty()) {
+            sb.append(envShort).append("_");
+        }
+        sb.append("doc").append(docId).append("_").append(base);
+        String name = sb.toString();
+        if (!name.toLowerCase(Locale.ROOT).endsWith(".pdf")) {
+            name = name + ".pdf";
+        }
+        if (name.length() > 160) {
+            name = name.substring(0, 156) + ".pdf";
+        }
+        return name;
     }
 
     private String buildSignedDownloadUrl(String envelopeId, String issueKey) {
@@ -2105,8 +2279,8 @@ public class DocusignRestResource {
         if (base == null || base.isEmpty()) {
             base = "signed-document";
         }
-        String name = "Signed_" + base;
-        if (!name.toLowerCase().endsWith(".pdf")) {
+        String name = "Signed_" + base + "_combined";
+        if (!name.toLowerCase(Locale.ROOT).endsWith(".pdf")) {
             name = name + ".pdf";
         }
         return name;

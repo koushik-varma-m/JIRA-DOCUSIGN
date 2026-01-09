@@ -55,16 +55,27 @@ public class DocusignDocumentDownloadService {
             fileName = fileName + ".pdf";
         }
 
-        // Idempotency check: if any attachment already starts with "Signed_" or exact filename, skip
+        attachPdfIfMissing(issue, pdfBytes, fileName);
+    }
+
+    /**
+     * Attach a PDF to an issue if an attachment with the same filename is not already present.
+     */
+    public boolean attachPdfIfMissing(Issue issue, byte[] pdfBytes, String fileName) throws Exception {
+        if (issue == null || pdfBytes == null) return false;
+        if (fileName == null || fileName.trim().isEmpty()) return false;
+        String targetName = fileName.trim();
+
+        // Idempotency check: exact filename match only (supports multiple signed docs per issue).
         List<Attachment> attachments = attachmentManager.getAttachments(issue);
         if (attachments != null) {
             for (Attachment att : attachments) {
                 if (att == null) continue;
                 String name = att.getFilename();
                 if (name == null) continue;
-                if (name.equalsIgnoreCase(fileName) || name.startsWith("Signed_")) {
-                    log.info("Signed document already attached for issue {}. Skipping duplicate: {}", issue.getKey(), name);
-                    return;
+                if (name.equalsIgnoreCase(targetName)) {
+                    log.info("Attachment already present for issue {}. Skipping duplicate: {}", issue.getKey(), name);
+                    return true;
                 }
             }
         }
@@ -72,8 +83,9 @@ public class DocusignDocumentDownloadService {
         ApplicationUser user = authContext != null ? authContext.getLoggedInUser() : null;
         File temp = writeTempFile(pdfBytes);
         try {
-            attachmentManager.createAttachment(temp, fileName, "application/pdf", user, issue);
-            log.info("Attached signed document {} to issue {}", fileName, issue.getKey());
+            attachmentManager.createAttachment(temp, targetName, "application/pdf", user, issue);
+            log.info("Attached PDF {} to issue {}", targetName, issue.getKey());
+            return true;
         } finally {
             if (temp != null && temp.exists()) {
                 temp.delete();
