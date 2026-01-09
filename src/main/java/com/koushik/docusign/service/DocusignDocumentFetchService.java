@@ -8,6 +8,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
+import org.apache.http.Header;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.util.EntityUtils;
 
@@ -72,6 +73,18 @@ public class DocusignDocumentFetchService {
         }
     }
 
+    public static final class DownloadedDocument {
+        public final byte[] bytes;
+        public final String contentType;
+        public final String contentDisposition;
+
+        public DownloadedDocument(byte[] bytes, String contentType, String contentDisposition) {
+            this.bytes = bytes;
+            this.contentType = contentType;
+            this.contentDisposition = contentDisposition;
+        }
+    }
+
     /**
      * List envelope documents from DocuSign. The response includes non-content docs like "certificate";
      * callers should filter based on {@code type} or {@code documentId}.
@@ -124,6 +137,15 @@ public class DocusignDocumentFetchService {
      * Caller should ensure the envelope is completed (or accept DocuSign error responses).
      */
     public byte[] fetchDocumentPdf(String envelopeId, String documentId, String accessToken) throws Exception {
+        DownloadedDocument doc = downloadEnvelopeDocument(envelopeId, documentId, accessToken, "application/pdf");
+        return doc != null ? doc.bytes : null;
+    }
+
+    /**
+     * Download an envelope document in whatever format DocuSign returns for the requested accept header.
+     * Use {@code accept=null} to omit the Accept header.
+     */
+    public DownloadedDocument downloadEnvelopeDocument(String envelopeId, String documentId, String accessToken, String accept) throws Exception {
         if (envelopeId == null || envelopeId.trim().isEmpty()) {
             throw new IllegalArgumentException("envelopeId is required");
         }
@@ -137,14 +159,20 @@ public class DocusignDocumentFetchService {
         try (CloseableHttpClient client = DocusignHttpClientFactory.create()) {
             HttpGet get = new HttpGet(url);
             get.setHeader("Authorization", "Bearer " + accessToken.trim());
-            get.setHeader("Accept", "application/pdf");
+            if (accept != null && !accept.trim().isEmpty()) {
+                get.setHeader("Accept", accept.trim());
+            }
             try (CloseableHttpResponse resp = client.execute(get)) {
                 int code = resp.getStatusLine().getStatusCode();
+                Header ct = resp.getFirstHeader("Content-Type");
+                Header cd = resp.getFirstHeader("Content-Disposition");
+                String contentType = ct != null ? ct.getValue() : null;
+                String contentDisposition = cd != null ? cd.getValue() : null;
                 byte[] body = EntityUtils.toByteArray(resp.getEntity());
                 if (code < 200 || code >= 300) {
                     throw new RuntimeException("HTTP " + code + " from DocuSign when downloading signed PDF");
                 }
-                return body;
+                return new DownloadedDocument(body, contentType, contentDisposition);
             }
         }
     }

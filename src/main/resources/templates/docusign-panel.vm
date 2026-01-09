@@ -11,7 +11,10 @@
 	                <label style="min-width:60px;">Document</label>
 	                <select id="docusign-position-attachment-select" class="aui-select" style="flex:1; min-width:200px;"></select>
 	            </div>
-	            <div id="docusign-position-file" style="font-size:12px; color:#6b778c; margin-bottom:8px;">Preview: (select an attachment)</div>
+	            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+	                <div id="docusign-position-file" style="font-size:12px; color:#6b778c; flex:1;">Preview: (select an attachment)</div>
+	                <a id="docusign-position-open" href="#" target="_blank" rel="noopener" style="display:none; font-size:12px;">Open</a>
+	            </div>
 	            <div style="display:flex; gap:8px; align-items:center; justify-content:flex-start; margin-bottom:8px;">
 	                <label style="min-width:60px;">Page</label>
 	                <input type="number" min="1" id="docusign-position-page-input" class="aui-input" value="1" style="width:80px;">
@@ -442,6 +445,7 @@
 		    var posLoading = document.getElementById('docusign-position-loading');
 		    var posAttachmentSelect = document.getElementById('docusign-position-attachment-select');
 		    var posFile = document.getElementById('docusign-position-file');
+		    var posOpen = document.getElementById('docusign-position-open');
 		    var posPageMax = document.getElementById('docusign-position-page-max');
 		    var posPreview = document.getElementById('docusign-position-preview');
 		    var posCancel = document.getElementById('docusign-position-cancel');
@@ -460,6 +464,7 @@
 	        if (!posLoading) posLoading = document.getElementById('docusign-position-loading');
 	        if (!posAttachmentSelect) posAttachmentSelect = document.getElementById('docusign-position-attachment-select');
 	        if (!posFile) posFile = document.getElementById('docusign-position-file');
+	        if (!posOpen) posOpen = document.getElementById('docusign-position-open');
 	        if (!posPageMax) posPageMax = document.getElementById('docusign-position-page-max');
 	        if (!posPreview) posPreview = document.getElementById('docusign-position-preview');
 	        if (!posCancel) posCancel = document.getElementById('docusign-position-cancel');
@@ -763,6 +768,7 @@
 	            currentPreview.kind = 'none';
 	            setPositionUiPageLimit(1);
 	            if (posFile) posFile.textContent = 'Preview: (select an attachment)';
+	            if (posOpen) posOpen.style.display = 'none';
 	            showPreviewMessage('Select an attachment to preview/place.');
 	            return Promise.resolve();
 	        }
@@ -775,6 +781,14 @@
 	                hint = ' (using first selected attachment for preview)';
 	            }
 	            posFile.textContent = 'Preview: ' + (att.filename || ('Attachment #' + att.id)) + hint;
+	        }
+	        if (posOpen) {
+	            try {
+	                posOpen.href = attachmentUrl(att);
+	                posOpen.style.display = 'inline';
+	            } catch (e) {
+	                posOpen.style.display = 'none';
+	            }
 	        }
 	        if (isPdfFile(att.filename)) {
 	            if (!window.pdfjsLib) {

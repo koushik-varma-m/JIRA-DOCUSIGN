@@ -93,6 +93,41 @@ public class DocusignDocumentDownloadService {
         }
     }
 
+    /**
+     * Attach any file bytes to the issue if an attachment with the same filename is not already present.
+     */
+    public boolean attachFileIfMissing(Issue issue, byte[] bytes, String fileName, String contentType) throws Exception {
+        if (issue == null || bytes == null) return false;
+        if (fileName == null || fileName.trim().isEmpty()) return false;
+        String targetName = fileName.trim();
+        String mime = (contentType != null && !contentType.trim().isEmpty()) ? contentType.trim() : "application/octet-stream";
+
+        List<Attachment> attachments = attachmentManager.getAttachments(issue);
+        if (attachments != null) {
+            for (Attachment att : attachments) {
+                if (att == null) continue;
+                String name = att.getFilename();
+                if (name == null) continue;
+                if (name.equalsIgnoreCase(targetName)) {
+                    log.info("Attachment already present for issue {}. Skipping duplicate: {}", issue.getKey(), name);
+                    return true;
+                }
+            }
+        }
+
+        ApplicationUser user = authContext != null ? authContext.getLoggedInUser() : null;
+        File temp = writeTempFile(bytes);
+        try {
+            attachmentManager.createAttachment(temp, targetName, mime, user, issue);
+            log.info("Attached file {} ({}) to issue {}", targetName, mime, issue.getKey());
+            return true;
+        } finally {
+            if (temp != null && temp.exists()) {
+                temp.delete();
+            }
+        }
+    }
+
     private File writeTempFile(byte[] data) throws IOException {
         File temp = File.createTempFile("docusign-signed-", ".pdf");
         try (FileOutputStream fos = new FileOutputStream(temp)) {

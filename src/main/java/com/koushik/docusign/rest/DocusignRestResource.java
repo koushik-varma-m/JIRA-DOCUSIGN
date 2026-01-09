@@ -1483,12 +1483,15 @@ public class DocusignRestResource {
                             for (int i = 1; i <= maxTry; i++) {
                                 String docId = String.valueOf(i);
                                 try {
-                                    byte[] pdf = fetch.fetchDocumentPdf(envelopeId, docId, accessToken);
-                                    if (!looksLikePdf(pdf)) {
+                                    DocusignDocumentFetchService.DownloadedDocument doc = fetch.downloadEnvelopeDocument(envelopeId, docId, accessToken, null);
+                                    byte[] bytes = doc != null ? doc.bytes : null;
+                                    if (bytes == null || bytes.length == 0) {
                                         continue;
                                     }
-                                    String fn = signedFileNameForDoc(issue, envelopeId, docId, "document-" + docId);
-                                    boolean ok = documentDownloadService.attachPdfIfMissing(issue, pdf, fn);
+                                    String ext = detectExtension(bytes, "document-" + docId);
+                                    String base = stripExtension("document-" + docId);
+                                    String fn = signedFileBaseNameForDoc(issue, envelopeId, docId, base) + "." + ext;
+                                    boolean ok = documentDownloadService.attachFileIfMissing(issue, bytes, fn, (doc != null && doc.contentType != null) ? doc.contentType : contentTypeForExt(ext));
                                     Attachment a = ok ? findAttachmentByFilename(issue, fn) : null;
                                     if (a != null) {
                                         attached = true;
@@ -1519,9 +1522,14 @@ public class DocusignRestResource {
                             }
                         } else {
                             for (DocusignAoStore.DocumentMeta d : contentDocs) {
-                                byte[] pdf = fetch.fetchDocumentPdf(envelopeId, d.documentId, accessToken);
-                                String fn = signedFileNameForDoc(issue, envelopeId, d.documentId, d.filename);
-                                boolean ok = documentDownloadService.attachPdfIfMissing(issue, pdf, fn);
+                                String docName = d.filename != null ? d.filename : ("document-" + d.documentId);
+                                DocusignDocumentFetchService.DownloadedDocument doc = fetch.downloadEnvelopeDocument(envelopeId, d.documentId, accessToken, null);
+                                byte[] bytes = doc != null ? doc.bytes : null;
+                                if (bytes == null || bytes.length == 0) continue;
+                                String ext = detectExtension(bytes, docName);
+                                String base = stripExtension(docName);
+                                String fn = signedFileBaseNameForDoc(issue, envelopeId, d.documentId, base) + "." + ext;
+                                boolean ok = documentDownloadService.attachFileIfMissing(issue, bytes, fn, (doc != null && doc.contentType != null) ? doc.contentType : contentTypeForExt(ext));
                                 Attachment a = ok ? findAttachmentByFilename(issue, fn) : null;
                                 if (a != null) {
                                     attached = true;
@@ -1663,7 +1671,7 @@ public class DocusignRestResource {
             String docId = (documentId != null && !documentId.trim().isEmpty()) ? documentId.trim() : "combined";
             DocusignDocumentFetchService fetch = new DocusignDocumentFetchService(resolvedRestBase, resolvedAccountId);
             byte[] pdf = "combined".equalsIgnoreCase(docId) ? fetch.fetchSignedPdf(resolvedId, accessToken) : fetch.fetchDocumentPdf(resolvedId, docId, accessToken);
-            String filename = "combined".equalsIgnoreCase(docId) ? defaultSignedFileName(issue, resolvedId) : signedFileNameForDoc(issue, resolvedId, docId, "document-" + docId);
+            String filename = "combined".equalsIgnoreCase(docId) ? defaultSignedFileName(issue, resolvedId) : signedFileNameForDocPdf(issue, resolvedId, docId, "document-" + docId);
             return Response.ok(pdf)
                     .type("application/pdf")
                     .header("Content-Disposition", "inline; filename=\"" + filename + "\"")
@@ -2217,6 +2225,55 @@ public class DocusignRestResource {
         }
     }
 
+    private boolean looksLikeZip(byte[] data) {
+        try {
+            if (data == null || data.length < 4) return false;
+            return (data[0] == 'P' && data[1] == 'K' && data[2] == 3 && data[3] == 4)
+                    || (data[0] == 'P' && data[1] == 'K' && data[2] == 5 && data[3] == 6)
+                    || (data[0] == 'P' && data[1] == 'K' && data[2] == 7 && data[3] == 8);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private String detectExtension(byte[] bytes, String docName) {
+        if (looksLikePdf(bytes)) return "pdf";
+        String name = docName != null ? docName.trim() : "";
+        int dot = name.lastIndexOf('.');
+        if (dot >= 0 && dot < name.length() - 1) {
+            String ext = name.substring(dot + 1).toLowerCase(Locale.ROOT);
+            ext = ext.replaceAll("[^a-z0-9]", "");
+            if (!ext.isEmpty() && ext.length() <= 10) return ext;
+        }
+        if (looksLikeZip(bytes)) return "zip";
+        return "bin";
+    }
+
+    private String stripExtension(String name) {
+        if (name == null) return "";
+        String s = name.trim();
+        int dot = s.lastIndexOf('.');
+        if (dot > 0) return s.substring(0, dot);
+        return s;
+    }
+
+    private String contentTypeForExt(String ext) {
+        if (ext == null) return "application/octet-stream";
+        String e = ext.toLowerCase(Locale.ROOT);
+        if ("pdf".equals(e)) return "application/pdf";
+        if ("docx".equals(e)) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        if ("doc".equals(e)) return "application/msword";
+        if ("xlsx".equals(e)) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        if ("xls".equals(e)) return "application/vnd.ms-excel";
+        if ("pptx".equals(e)) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+        if ("ppt".equals(e)) return "application/vnd.ms-powerpoint";
+        if ("txt".equals(e)) return "text/plain";
+        if ("png".equals(e)) return "image/png";
+        if ("jpg".equals(e) || "jpeg".equals(e)) return "image/jpeg";
+        if ("zip".equals(e)) return "application/zip";
+        return "application/octet-stream";
+    }
+
     private Attachment findSignedAttachment(Issue issue) {
         try {
             if (issue == null) return null;
@@ -2257,7 +2314,7 @@ public class DocusignRestResource {
         return arr;
     }
 
-    private String signedFileNameForDoc(Issue issue, String envelopeId, String documentId, String docName) {
+    private String signedFileBaseNameForDoc(Issue issue, String envelopeId, String documentId, String docName) {
         String issueKey = issue != null ? issue.getKey() : null;
         String env = envelopeId != null ? envelopeId.trim() : "";
         String envShort = env.length() >= 8 ? env.substring(0, 8) : env;
@@ -2279,13 +2336,15 @@ public class DocusignRestResource {
         }
         sb.append("doc").append(docId).append("_").append(base);
         String name = sb.toString();
-        if (!name.toLowerCase(Locale.ROOT).endsWith(".pdf")) {
-            name = name + ".pdf";
-        }
         if (name.length() > 160) {
-            name = name.substring(0, 156) + ".pdf";
+            name = name.substring(0, 160);
         }
         return name;
+    }
+
+    private String signedFileNameForDocPdf(Issue issue, String envelopeId, String documentId, String docName) {
+        String base = signedFileBaseNameForDoc(issue, envelopeId, documentId, docName);
+        return base + ".pdf";
     }
 
     private String buildSignedDownloadUrl(String envelopeId, String issueKey) {
