@@ -708,9 +708,17 @@ public class DocusignRestResource {
             } catch (Exception ignore) {
                 history = null;
             }
-            if (history == null) {
-                history = new JsonArray();
+            // Fall back to the issue-property cache when AO isn't available yet or has no entries.
+            if (history == null || history.size() == 0) {
+                try {
+                    JsonArray propHistory = loadIssuePropertyHistory(issue, n);
+                    if (propHistory != null && propHistory.size() > 0) {
+                        history = propHistory;
+                    }
+                } catch (Exception ignore) {
+                }
             }
+            if (history == null) history = new JsonArray();
 
             JsonObject resp = new JsonObject();
             resp.addProperty("issueKey", issue.getKey());
@@ -723,6 +731,37 @@ public class DocusignRestResource {
                     .entity(errorJson(msg))
                     .build();
         }
+    }
+
+    private JsonArray loadIssuePropertyHistory(Issue issue, int limit) {
+        if (issue == null) return null;
+        int n = (limit <= 0 || limit > 50) ? 15 : limit;
+        String raw = null;
+        try {
+            raw = readIssueProperty(issue, "docusign.envelopes");
+        } catch (Exception ignore) {
+            raw = null;
+        }
+        if (raw == null || raw.trim().isEmpty()) return null;
+
+        JsonArray arr;
+        try {
+            JsonElement el = JsonParser.parseString(raw);
+            if (el == null || !el.isJsonArray()) return null;
+            arr = el.getAsJsonArray();
+        } catch (Exception e) {
+            return null;
+        }
+        if (arr.size() == 0) return null;
+
+        // Convert to newest-first (AO endpoint semantics) and limit size.
+        JsonArray out = new JsonArray();
+        for (int i = arr.size() - 1; i >= 0 && out.size() < n; i--) {
+            JsonElement el = arr.get(i);
+            if (el == null || !el.isJsonObject()) continue;
+            out.add(el.getAsJsonObject());
+        }
+        return out;
     }
 
     /**
