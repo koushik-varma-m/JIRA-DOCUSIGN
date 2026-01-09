@@ -576,13 +576,15 @@ public final class DocusignAoStore {
         int p = parseIntSafe(pageNumber, 1);
         int x = parseIntSafe(xPosition, 400);
         int y = parseIntSafe(yPosition, 650);
+        // AO column naming doesn't insert '_' between a single leading uppercase letter and the next uppercase letter:
+        // getXPosition -> XPOSITION (not X_POSITION), getYPosition -> YPOSITION.
         AoDocusignTab tab = ao.create(AoDocusignTab.class,
                 new DBParam("SIGNER_ID", signer.getID()),
                 new DBParam("TAB_TYPE", "signHere"),
                 new DBParam("DOCUMENT_ID", docId),
                 new DBParam("PAGE_NUMBER", p),
-                new DBParam("X_POSITION", x),
-                new DBParam("Y_POSITION", y),
+                new DBParam("XPOSITION", x),
+                new DBParam("YPOSITION", y),
                 new DBParam("POSITION_INDEX", index));
         tab.setCreatedAt(now);
         tab.save();
