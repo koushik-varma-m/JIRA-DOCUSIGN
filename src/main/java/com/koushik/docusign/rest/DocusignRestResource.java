@@ -1483,7 +1483,7 @@ public class DocusignRestResource {
                             for (int i = 1; i <= maxTry; i++) {
                                 String docId = String.valueOf(i);
                                 try {
-                                    DocusignDocumentFetchService.DownloadedDocument doc = fetch.downloadEnvelopeDocument(envelopeId, docId, accessToken, null);
+                                    DocusignDocumentFetchService.DownloadedDocument doc = downloadEnvelopeDocumentWithFallback(fetch, envelopeId, docId, accessToken);
                                     byte[] bytes = doc != null ? doc.bytes : null;
                                     if (bytes == null || bytes.length == 0) {
                                         continue;
@@ -1523,7 +1523,7 @@ public class DocusignRestResource {
                         } else {
                             for (DocusignAoStore.DocumentMeta d : contentDocs) {
                                 String docName = d.filename != null ? d.filename : ("document-" + d.documentId);
-                                DocusignDocumentFetchService.DownloadedDocument doc = fetch.downloadEnvelopeDocument(envelopeId, d.documentId, accessToken, null);
+                                DocusignDocumentFetchService.DownloadedDocument doc = downloadEnvelopeDocumentWithFallback(fetch, envelopeId, d.documentId, accessToken);
                                 byte[] bytes = doc != null ? doc.bytes : null;
                                 if (bytes == null || bytes.length == 0) continue;
                                 String ext = detectExtension(bytes, docName);
@@ -2274,6 +2274,19 @@ public class DocusignRestResource {
         return "application/octet-stream";
     }
 
+    private DocusignDocumentFetchService.DownloadedDocument downloadEnvelopeDocumentWithFallback(DocusignDocumentFetchService fetch,
+                                                                                               String envelopeId,
+                                                                                               String documentId,
+                                                                                               String accessToken) throws Exception {
+        // Some DocuSign accounts/envelopes require an explicit Accept header; try raw first for "original",
+        // then fall back to PDF so we still get per-document files rather than combined-only.
+        try {
+            return fetch.downloadEnvelopeDocument(envelopeId, documentId, accessToken, null);
+        } catch (Exception first) {
+            return fetch.downloadEnvelopeDocument(envelopeId, documentId, accessToken, "application/pdf");
+        }
+    }
+
     private Attachment findSignedAttachment(Issue issue) {
         try {
             if (issue == null) return null;
@@ -2324,6 +2337,7 @@ public class DocusignRestResource {
         int dot = base.lastIndexOf('.');
         if (dot > 0) base = base.substring(0, dot);
         base = sanitize(base);
+        base = stripSignedByNoise(base);
         if (base == null || base.isEmpty()) base = "document-" + docId;
 
         StringBuilder sb = new StringBuilder();
@@ -2340,6 +2354,19 @@ public class DocusignRestResource {
             name = name.substring(0, 160);
         }
         return name;
+    }
+
+    private String stripSignedByNoise(String s) {
+        if (s == null) return null;
+        String t = s;
+        // Remove common "Signed by <email>" style suffixes/prefixes.
+        t = t.replaceAll("(?i)\\bsigned\\s*by\\b.*$", "").trim();
+        // Remove any embedded email addresses (leaves rest of filename intact).
+        t = t.replaceAll("(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", "").trim();
+        // Collapse leftover punctuation/spaces.
+        t = t.replaceAll("[\\s._-]{2,}", "_");
+        t = t.replaceAll("^[_\\-\\.\\s]+|[_\\-\\.\\s]+$", "").trim();
+        return t;
     }
 
     private String signedFileNameForDocPdf(Issue issue, String envelopeId, String documentId, String docName) {

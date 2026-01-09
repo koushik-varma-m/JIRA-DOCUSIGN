@@ -309,13 +309,7 @@
         </div>
     </div>
 
-    ## Envelope history (AO-backed)
-    <div class="aui-group">
-        <div class="aui-item">
-            <h4>Envelope History</h4>
-            <div id="docusign-envelope-history" class="aui-message aui-message-info" style="display:none;margin-bottom:8px;"></div>
-        </div>
-    </div>
+    ## Envelope history removed (not shown in UI)
 </div>
 
 <script type="text/javascript">
@@ -1227,48 +1221,7 @@
 	    }
 	    ensureUiRefs();
 
-	    function renderEnvelopeHistory(items) {
-	        var box = document.querySelector('#docusign-envelope-history');
-	        if (!box) return;
-	        var list = Array.isArray(items) ? items : [];
-	        if (!list.length) {
-	            box.style.display = 'block';
-	            box.className = 'aui-message aui-message-info';
-	            box.innerHTML = '<p>No envelopes have been sent for this issue yet.</p>';
-	            return;
-	        }
-	        var html = '<ul style="margin:0; padding-left:18px;">' + list.map(function(h) {
-	            var id = (h.envelopeId || '').trim();
-	            var st = (h.status || '').trim();
-	            var when = '';
-	            try {
-	                var ms = (h.updatedAtMs || h.createdAtMs || 0);
-	                if (ms) when = ' • ' + (new Date(ms)).toLocaleString();
-	            } catch (e) {}
-	            var sender = h.sender ? (' • ' + h.sender) : '';
-	            return '<li><code style="font-size:11px;">' + id + '</code> — <strong>' + st + '</strong>' + sender + when + '</li>';
-	        }).join('') + '</ul>';
-	        box.style.display = 'block';
-	        box.className = 'aui-message aui-message-info';
-	        box.innerHTML = html;
-	    }
-
-	    function loadEnvelopeHistory(issueKey) {
-	        if (!issueKey) return;
-	        var base = (typeof AJS !== 'undefined' && AJS.contextPath ? AJS.contextPath() : '');
-	        var url = base + '/rest/docusign/1.0/send/state/history?issueKey=' + encodeURIComponent(issueKey) + '&limit=15';
-	        return fetch(url, { credentials: 'include' })
-	            .then(function(resp) { return resp.text().then(function(t){ return { status: resp.status, body: t }; }); })
-	            .then(function(res) {
-	                if (res.status < 200 || res.status >= 300) return;
-	                var parsed = null;
-	                try { parsed = JSON.parse(res.body); } catch (e) { parsed = null; }
-	                if (parsed && parsed.history) {
-	                    renderEnvelopeHistory(parsed.history);
-	                }
-	            })
-	            .catch(function(){});
-	    }
+	    // Envelope history removed from UI
 
     if (window.docuSignEnvelopeId && sendBtn) {
         sendBtn.disabled = true;
@@ -1717,7 +1670,7 @@
                     envelopeStatus: res.body.status || '',
                     signers: []
                 });
-                try { loadEnvelopeHistory(window.docuSignIssueKey || ''); } catch (e) {}
+                // history not shown
                 disableSendUI();
 	                showWaitingBanner();
 	                setEditResendVisibility(res.body.status || '');
@@ -1868,7 +1821,7 @@
 		            window.docuSignIssueKey = issueKey;
 		            resetUiForIssue(issueKey);
 		            lastBootIssueKey = issueKey;
-	            loadEnvelopeHistory(issueKey);
+	            // history not shown
 	            // Fetch persisted state for this issue (handles Jira SPA navigation where Velocity scripts may not re-run).
 	            loadIssueDocusignState(issueKey).then(function(st) {
 	                window.docuSignEnvelopeId = (st.envelopeId || '').trim();
@@ -1893,9 +1846,7 @@
 		            });
 		            return;
 		        }
-	        if (issueKey) {
-	            loadEnvelopeHistory(issueKey);
-	        }
+	        // history not shown
 		        initSignersUI();
 	    }
 
