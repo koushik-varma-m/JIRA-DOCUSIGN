@@ -1581,7 +1581,9 @@
 	            if (addExternalBtn) addExternalBtn.style.display = '';
 	            if (signersList) signersList.innerHTML = '';
 	            addSignerRow();
-	            updateEnvelopeStatus('');
+	            if (typeof window.updateEnvelopeStatus === 'function') {
+	                window.updateEnvelopeStatus('');
+	            }
 		            setEditResendVisibility('');
 		            showResult(true, 'Cleared envelope state. You can send again.');
 		        }).catch(function(err) {
@@ -1965,6 +1967,7 @@
         statusBox.style.display = 'block';
         statusBox.innerHTML = '<p><strong>Envelope Status:</strong> ' + label + '</p>';
     }
+    window.updateEnvelopeStatus = updateEnvelopeStatus;
 
 	    var lastKnownSigners = null;
 	    var lastKnownEnvelopeStatus = null;
