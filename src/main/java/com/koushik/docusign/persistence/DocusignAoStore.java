@@ -13,6 +13,7 @@ import com.koushik.docusign.ao.AoDocusignSigner;
 import com.koushik.docusign.ao.AoDocusignTab;
 import com.koushik.docusign.docusign.DocusignService;
 import com.koushik.docusign.service.DocusignRecipientStatusService;
+import net.java.ao.DBParam;
 import net.java.ao.Query;
 
 import java.util.ArrayList;
@@ -98,12 +99,12 @@ public final class DocusignAoStore {
                 prev.save();
             }
 
-            AoDocusignEnvelope env = ao.create(AoDocusignEnvelope.class);
-            env.setIssueKey(issueKey);
+            AoDocusignEnvelope env = ao.create(AoDocusignEnvelope.class,
+                    new DBParam("ISSUE_KEY", issueKey),
+                    new DBParam("ENVELOPE_ID", envId),
+                    new DBParam("ACTIVE", Boolean.TRUE));
             env.setIssueId(issueId);
-            env.setEnvelopeId(envId);
             env.setStatus(envStatus);
-            env.setActive(true);
             env.setSenderUserKey(senderUserKey);
             env.setSenderDisplayName(senderName);
             env.setSenderEmail(senderEmail);
@@ -126,11 +127,12 @@ public final class DocusignAoStore {
                     if (d == null) continue;
                     Long attId = findAttachmentId(attachmentIds, d);
                     if (attId == null) continue;
-                    AoDocusignDocument doc = ao.create(AoDocusignDocument.class);
-                    doc.setEnvelope(env);
-                    doc.setAttachmentId(attId);
+                    String docId = req(d.documentId, "1");
+                    AoDocusignDocument doc = ao.create(AoDocusignDocument.class,
+                            new DBParam("ENVELOPE_ID", env.getID()),
+                            new DBParam("ATTACHMENT_ID", attId),
+                            new DBParam("DOCUMENT_ID", docId));
                     doc.setFilename(safe(d.filename));
-                    doc.setDocumentId(req(d.documentId, "1"));
                     doc.setCreatedAt(now);
                     doc.save();
                 }
@@ -142,22 +144,26 @@ public final class DocusignAoStore {
                     DocusignService.DocusignSigner s = signers.get(i);
                     if (s == null) continue;
 
-                    AoDocusignSigner signer = ao.create(AoDocusignSigner.class);
-                    signer.setEnvelope(env);
                     SignerMeta meta = (signerMeta != null && i < signerMeta.size()) ? signerMeta.get(i) : null;
                     String type = meta != null ? safe(meta.type) : null;
                     String value = meta != null ? safe(meta.value) : null;
                     String normalizedType = (type != null && !type.trim().isEmpty()) ? type.trim().toUpperCase() : "UNKNOWN";
-                    signer.setSignerType(normalizedType);
+                    String email = req(s.email, "unknown");
+                    int routingOrder = parseIntSafe(s.routingOrder, i + 1);
+                    String recipientId = req(s.recipientId, String.valueOf(i + 1));
+
+                    AoDocusignSigner signer = ao.create(AoDocusignSigner.class,
+                            new DBParam("ENVELOPE_ID", env.getID()),
+                            new DBParam("SIGNER_TYPE", normalizedType),
+                            new DBParam("EMAIL", email),
+                            new DBParam("ROUTING_ORDER", routingOrder),
+                            new DBParam("RECIPIENT_ID", recipientId));
                     if ("JIRA_USER".equalsIgnoreCase(normalizedType) && value != null && !value.trim().isEmpty()) {
                         signer.setUserKey(value.trim());
                     } else {
                         signer.setUserKey(null);
                     }
-                    signer.setEmail(req(s.email, "unknown"));
                     signer.setName(safe(s.name));
-                    signer.setRoutingOrder(parseIntSafe(s.routingOrder, i + 1));
-                    signer.setRecipientId(req(s.recipientId, String.valueOf(i + 1)));
                     signer.setStatus("sent");
                     signer.setCreatedAt(now);
                     signer.setUpdatedAt(now);
@@ -203,9 +209,9 @@ public final class DocusignAoStore {
                 }
             }
 
-            AoDocusignEvent event = ao.create(AoDocusignEvent.class);
-            event.setEnvelope(env);
-            event.setEventType("envelope.sent");
+            AoDocusignEvent event = ao.create(AoDocusignEvent.class,
+                    new DBParam("ENVELOPE_ID", env.getID()),
+                    new DBParam("EVENT_TYPE", "envelope.sent"));
             event.setEnvelopeStatus(envStatus);
             event.setOccurredAt(now);
             event.save();
@@ -246,10 +252,10 @@ public final class DocusignAoStore {
             AoDocusignEnvelope env = (envs != null && envs.length > 0) ? envs[0] : null;
             if (env == null) {
                 // Best-effort: create a minimal envelope record.
-                env = ao.create(AoDocusignEnvelope.class);
-                env.setIssueKey(key);
-                env.setEnvelopeId(envId);
-                env.setActive(true);
+                env = ao.create(AoDocusignEnvelope.class,
+                        new DBParam("ISSUE_KEY", key),
+                        new DBParam("ENVELOPE_ID", envId),
+                        new DBParam("ACTIVE", Boolean.TRUE));
                 env.setCreatedAt(now);
             }
 
@@ -284,9 +290,9 @@ public final class DocusignAoStore {
                 }
             }
 
-            AoDocusignEvent event = ao.create(AoDocusignEvent.class);
-            event.setEnvelope(env);
-            event.setEventType(type);
+            AoDocusignEvent event = ao.create(AoDocusignEvent.class,
+                    new DBParam("ENVELOPE_ID", env.getID()),
+                    new DBParam("EVENT_TYPE", type));
             event.setEnvelopeStatus(status);
             event.setOccurredAt(now);
             event.setPayloadHash(hash);
@@ -382,10 +388,10 @@ public final class DocusignAoStore {
                 AoDocusignEnvelope[] envs = ao.find(AoDocusignEnvelope.class, Query.select().where("ISSUE_KEY = ? AND ENVELOPE_ID = ?", key, envId).order("ID DESC").limit(1));
                 AoDocusignEnvelope env = (envs != null && envs.length > 0) ? envs[0] : null;
                 if (env == null) {
-                    env = ao.create(AoDocusignEnvelope.class);
-                    env.setIssueKey(key);
-                    env.setEnvelopeId(envId);
-                    env.setActive(true);
+                    env = ao.create(AoDocusignEnvelope.class,
+                            new DBParam("ISSUE_KEY", key),
+                            new DBParam("ENVELOPE_ID", envId),
+                            new DBParam("ACTIVE", Boolean.TRUE));
                     env.setCreatedAt(now);
                 }
 
@@ -417,9 +423,9 @@ public final class DocusignAoStore {
                     }
                 }
 
-                AoDocusignEvent event = ao.create(AoDocusignEvent.class);
-                event.setEnvelope(env);
-                event.setEventType("webhook.connect");
+                AoDocusignEvent event = ao.create(AoDocusignEvent.class,
+                        new DBParam("ENVELOPE_ID", env.getID()),
+                        new DBParam("EVENT_TYPE", "webhook.connect"));
                 event.setEnvelopeStatus(status);
                 event.setOccurredAt(now);
                 event.setPayloadHash(hash);
@@ -566,14 +572,18 @@ public final class DocusignAoStore {
                                   int index,
                                   Date now) {
         if (ao == null || signer == null) return;
-        AoDocusignTab tab = ao.create(AoDocusignTab.class);
-        tab.setSigner(signer);
-        tab.setTabType("signHere");
-        tab.setDocumentId(req(documentId, "1"));
-        tab.setPageNumber(parseIntSafe(pageNumber, 1));
-        tab.setXPosition(parseIntSafe(xPosition, 400));
-        tab.setYPosition(parseIntSafe(yPosition, 650));
-        tab.setPositionIndex(index);
+        String docId = req(documentId, "1");
+        int p = parseIntSafe(pageNumber, 1);
+        int x = parseIntSafe(xPosition, 400);
+        int y = parseIntSafe(yPosition, 650);
+        AoDocusignTab tab = ao.create(AoDocusignTab.class,
+                new DBParam("SIGNER_ID", signer.getID()),
+                new DBParam("TAB_TYPE", "signHere"),
+                new DBParam("DOCUMENT_ID", docId),
+                new DBParam("PAGE_NUMBER", p),
+                new DBParam("X_POSITION", x),
+                new DBParam("Y_POSITION", y),
+                new DBParam("POSITION_INDEX", index));
         tab.setCreatedAt(now);
         tab.save();
     }
