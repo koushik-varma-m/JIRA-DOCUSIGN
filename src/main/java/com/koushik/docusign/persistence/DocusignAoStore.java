@@ -1,7 +1,6 @@
 package com.koushik.docusign.persistence;
 
 import com.atlassian.activeobjects.external.ActiveObjects;
-import com.atlassian.jira.component.ComponentAccessor;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.user.ApplicationUser;
 import com.google.gson.Gson;
@@ -42,11 +41,7 @@ public final class DocusignAoStore {
     }
 
     private static ActiveObjects ao() {
-        try {
-            return ComponentAccessor.getOSGiComponentInstanceOfType(ActiveObjects.class);
-        } catch (Exception e) {
-            return null;
-        }
+        return DocusignAoProvider.get();
     }
 
     public static boolean isAvailable() {
