@@ -1478,17 +1478,44 @@ public class DocusignRestResource {
                         }
 
                         if (contentDocs.isEmpty()) {
-                            // Last resort: attach the combined doc if DocuSign doesn't expose documentIds.
-                            byte[] pdf = fetch.fetchSignedPdf(envelopeId, accessToken);
-                            String fn = defaultSignedFileName(issue, envelopeId);
-                            boolean ok = documentDownloadService.attachPdfIfMissing(issue, pdf, fn);
-                            Attachment a = ok ? findAttachmentByFilename(issue, fn) : null;
-                            if (a != null) {
-                                attached = true;
-                                JsonObject obj = new JsonObject();
-                                obj.addProperty("id", a.getId());
-                                obj.addProperty("name", a.getFilename());
-                                attachedArr.add(obj);
+                            // Fallback: try numeric documentIds (1..10). If this yields at least one doc, keep them.
+                            int maxTry = 10;
+                            for (int i = 1; i <= maxTry; i++) {
+                                String docId = String.valueOf(i);
+                                try {
+                                    byte[] pdf = fetch.fetchDocumentPdf(envelopeId, docId, accessToken);
+                                    if (!looksLikePdf(pdf)) {
+                                        continue;
+                                    }
+                                    String fn = signedFileNameForDoc(issue, envelopeId, docId, "document-" + docId);
+                                    boolean ok = documentDownloadService.attachPdfIfMissing(issue, pdf, fn);
+                                    Attachment a = ok ? findAttachmentByFilename(issue, fn) : null;
+                                    if (a != null) {
+                                        attached = true;
+                                        JsonObject obj = new JsonObject();
+                                        obj.addProperty("id", a.getId());
+                                        obj.addProperty("name", a.getFilename());
+                                        attachedArr.add(obj);
+                                    }
+                                } catch (Exception ignore) {
+                                    // stop once numeric ids stop working
+                                    break;
+                                }
+                            }
+
+                            if (attachedArr.size() == 0) {
+                                // Last resort: attach the combined doc if DocuSign doesn't expose documentIds.
+                                byte[] pdf = fetch.fetchSignedPdf(envelopeId, accessToken);
+                                String fn = defaultSignedFileName(issue, envelopeId);
+                                boolean ok = documentDownloadService.attachPdfIfMissing(issue, pdf, fn);
+                                Attachment a = ok ? findAttachmentByFilename(issue, fn) : null;
+                                if (a != null) {
+                                    attached = true;
+                                    JsonObject obj = new JsonObject();
+                                    obj.addProperty("id", a.getId());
+                                    obj.addProperty("name", a.getFilename());
+                                    attachedArr.add(obj);
+                                }
                             }
                         } else {
                             for (DocusignAoStore.DocumentMeta d : contentDocs) {
@@ -2179,6 +2206,15 @@ public class DocusignRestResource {
         } catch (Exception ignore) {
         }
         return null;
+    }
+
+    private boolean looksLikePdf(byte[] data) {
+        try {
+            if (data == null || data.length < 5) return false;
+            return data[0] == '%' && data[1] == 'P' && data[2] == 'D' && data[3] == 'F' && data[4] == '-';
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private Attachment findSignedAttachment(Issue issue) {
